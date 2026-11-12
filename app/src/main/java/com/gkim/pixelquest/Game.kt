@@ -421,7 +421,7 @@ class Game {
     }
 
     private fun overlay(c: Canvas) {
-        paint.color = 0x96000000
+        paint.color = 0x96000000.toInt()
         c.drawRect(0f, 0f, VW.toFloat(), VH.toFloat(), paint)
     }
 
