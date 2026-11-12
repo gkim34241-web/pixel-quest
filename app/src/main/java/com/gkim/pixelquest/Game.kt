@@ -173,7 +173,8 @@ class Game {
     private val invItem = IntArray(INV_SLOTS) { -1 }
     private val invCount = IntArray(INV_SLOTS)
     private var selected = 0
-    private var invOpen = false
+    var invOpen = false
+    private set
     private var invPage = 0
     private var invSel = -1
     private var msg = ""
