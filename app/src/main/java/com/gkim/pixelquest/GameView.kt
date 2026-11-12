@@ -21,13 +21,13 @@ class GameView(context: Context) : SurfaceView(context), SurfaceHolder.Callback,
     private val frameCanvas = Canvas(frame)
     private val screenPaint = Paint()
     private val dest = RectF()
+    private var scale = 1f
 
     private var joyPointer = -1
     private var joyBaseX = 0f
     private var joyBaseY = 0f
     private var joyX = 0f
     private var joyY = 0f
-    private var attackQueued = false
     private val keys = HashSet<Int>()
 
     init {
@@ -67,8 +67,7 @@ class GameView(context: Context) : SurfaceView(context), SurfaceHolder.Callback,
             if (keys.contains(KeyEvent.KEYCODE_DPAD_RIGHT) || keys.contains(KeyEvent.KEYCODE_D)) mx = 1f
             if (keys.contains(KeyEvent.KEYCODE_DPAD_UP) || keys.contains(KeyEvent.KEYCODE_W)) my = -1f
             if (keys.contains(KeyEvent.KEYCODE_DPAD_DOWN) || keys.contains(KeyEvent.KEYCODE_S)) my = 1f
-            val attack = attackQueued || keys.contains(KeyEvent.KEYCODE_SPACE)
-            attackQueued = false
+            val attack = keys.contains(KeyEvent.KEYCODE_SPACE)
 
             game.update(dt, Game.Input(mx, my, attack))
 
@@ -89,7 +88,7 @@ class GameView(context: Context) : SurfaceView(context), SurfaceHolder.Callback,
 
     private fun layoutDest() {
         if (width == 0 || height == 0) return
-        val scale = minOf(width / Game.VW.toFloat(), height / Game.VH.toFloat())
+        scale = minOf(width / Game.VW.toFloat(), height / Game.VH.toFloat())
         val w = Game.VW * scale
         val h = Game.VH * scale
         dest.set((width - w) / 2f, (height - h) / 2f, (width + w) / 2f, (height + h) / 2f)
@@ -109,7 +108,7 @@ class GameView(context: Context) : SurfaceView(context), SurfaceHolder.Callback,
                     joyX = 0f
                     joyY = 0f
                 } else {
-                    attackQueued = true
+                    game.onTap((event.getX(i) - dest.left) / scale, (event.getY(i) - dest.top) / scale)
                 }
             }
             MotionEvent.ACTION_MOVE -> {
@@ -146,7 +145,7 @@ class GameView(context: Context) : SurfaceView(context), SurfaceHolder.Callback,
 
     override fun onKeyDown(keyCode: Int, event: KeyEvent?): Boolean {
         keys.add(keyCode)
-        if (keyCode == KeyEvent.KEYCODE_SPACE || keyCode == KeyEvent.KEYCODE_ENTER) attackQueued = true
+        if (keyCode == KeyEvent.KEYCODE_SPACE || keyCode == KeyEvent.KEYCODE_ENTER) game.onTap(-1f, -1f)
         return true
     }
 
