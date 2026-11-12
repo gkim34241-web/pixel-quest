@@ -101,7 +101,7 @@ class GameView(context: Context) : SurfaceView(context), SurfaceHolder.Callback,
                 val i = event.actionIndex
                 val id = event.getPointerId(i)
                 val leftSide = event.getX(i) < width / 2f
-                if (leftSide && joyPointer == -1 && game.state == Game.State.PLAY) {
+                if (leftSide && joyPointer == -1 && game.state == Game.State.PLAY && !game.invOpen) {
                     joyPointer = id
                     joyBaseX = event.getX(i)
                     joyBaseY = event.getY(i)
@@ -146,6 +146,7 @@ class GameView(context: Context) : SurfaceView(context), SurfaceHolder.Callback,
     override fun onKeyDown(keyCode: Int, event: KeyEvent?): Boolean {
         keys.add(keyCode)
         if (keyCode == KeyEvent.KEYCODE_SPACE || keyCode == KeyEvent.KEYCODE_ENTER) game.onTap(-1f, -1f)
+        if (keyCode == KeyEvent.KEYCODE_E) game.toggleInv()
         return true
     }
 

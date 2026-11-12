@@ -27,10 +27,22 @@ class Game {
         const val SWING_TIME = 0.22f
         const val SWING_COOLDOWN = 0.38f
 
-        const val HOT_SLOTS = 7
-        const val HOT_X0 = 98f
+        const val MAX_HP = 10
+        const val HOT_SLOTS = 6
+        const val INV_SLOTS = 40
+        const val STACK = 100
+        const val HOT_X0 = 106f
         const val HOT_Y0 = 160f
         const val HOT_CELL = 18f
+
+        const val PX0 = 40f
+        const val PY0 = 16f
+        const val PW = 240f
+        const val PH = 148f
+        const val GRID_X0 = 88f
+        const val GRID_Y0 = 40f
+        const val GRID_COLS = 8
+        const val GRID_ROWS = 5
     }
 
     enum class State { TITLE, PLAY, DEAD }
@@ -49,7 +61,7 @@ class Game {
         override var y = 0f
         override val w = 10f
         override val h = 12f
-        var hp = 3
+        var hp = MAX_HP
         var dirX = 0f
         var dirY = 1f
         var walkT = 0f
@@ -61,7 +73,7 @@ class Game {
         fun reset(cx: Float, cy: Float) {
             x = cx - w / 2
             y = cy - h / 2
-            hp = 3
+            hp = MAX_HP
             dirX = 0f
             dirY = 1f
             walkT = 0f
@@ -117,6 +129,10 @@ class Game {
     private val T_MWALL = 17
     private val T_RUIN_WALL = 18
     private val T_RUIN_FLOOR = 19
+    private val T_WORKBENCH = 20
+    private val T_WWOOD = 21
+    private val T_WSTONE = 22
+    private val T_DOOR = 23
 
     private val I_SWORD = 0
     private val I_AXE = 1
@@ -125,8 +141,17 @@ class Game {
     private val I_STONE = 4
     private val I_IRON = 5
     private val I_GOLD = 6
+    private val I_WORKBENCH = 7
+    private val I_WWOOD = 8
+    private val I_WSTONE = 9
+    private val I_DOOR = 10
+    private val I_IRON_SWORD = 11
+    private val I_IRON_PICK = 12
 
-    private val itemNames = arrayOf("Sword", "Axe", "Pickaxe", "Wood", "Stone", "Iron", "Gold")
+    private val itemNames = arrayOf(
+        "Sword", "Axe", "Pickaxe", "Wood", "Stone", "Iron", "Gold",
+        "Workbench", "Wood wall", "Stone wall", "Door", "Iron sword", "Iron pick"
+    )
 
     var state = State.TITLE
     private val tiles = IntArray(MAP_W * MAP_H)
@@ -145,8 +170,12 @@ class Game {
     private var hurtFlash = 0f
     private var time = 0f
     private var random = Random(42)
-    private val counts = IntArray(HOT_SLOTS)
+    private val invItem = IntArray(INV_SLOTS) { -1 }
+    private val invCount = IntArray(INV_SLOTS)
     private var selected = 0
+    private var invOpen = false
+    private var invPage = 0
+    private var invSel = -1
     private var msg = ""
     private var msgTime = 0f
     private var curBiome = -1
@@ -184,7 +213,8 @@ class Game {
     private fun solidTile(t: Int) =
         t == T_TREE || t == T_ROCK || t == T_WATER || t == T_CACTUS || t == T_STREE ||
             t == T_LAVA || t == T_ORE_IRON || t == T_ORE_GOLD || t == T_DEAD_TREE ||
-            t == T_MWALL || t == T_RUIN_WALL
+            t == T_MWALL || t == T_RUIN_WALL ||
+            t == T_WORKBENCH || t == T_WWOOD || t == T_WSTONE
 
     private fun solid(tx: Int, ty: Int) = solidTile(tileAt(tx, ty))
 
@@ -258,7 +288,13 @@ class Game {
             s.hp = slimeMaxHp[s.type]
             slimes.add(s)
         }
-        counts.fill(0)
+        invItem.fill(-1)
+        invCount.fill(0)
+        invOpen = false
+        invSel = -1
+        invItem[0] = I_SWORD; invCount[0] = 1
+        invItem[1] = I_AXE; invCount[1] = 1
+        invItem[2] = I_PICK; invCount[2] = 1
         selected = 0
         curBiome = -1
         msg = ""
@@ -273,6 +309,8 @@ class Game {
     private fun respawn() {
         player.reset(spawnX, spawnY)
         hurtFlash = 0f
+        invOpen = false
+        tapAttack = false
         startQueued = false
         state = State.PLAY
     }
@@ -419,15 +457,88 @@ class Game {
     fun onTap(vx: Float, vy: Float) {
         when (state) {
             State.PLAY -> {
+                if (invOpen) {
+                    invTap(vx, vy)
+                    return
+                }
+                if (vx >= VW - 18f && vy <= 18f) {
+                    toggleInv()
+                    return
+                }
                 if (vy >= HOT_Y0 - 4f && vx >= HOT_X0 - 2f && vx <= HOT_X0 + HOT_SLOTS * HOT_CELL) {
                     val slot = ((vx - HOT_X0) / HOT_CELL).toInt().coerceIn(0, HOT_SLOTS - 1)
                     selected = slot
-                    showMsg(itemNames[slot])
+                    val it = invItem[slot]
+                    showMsg(if (it >= 0) itemNames[it] else "empty")
                 } else {
                     tapAttack = true
                 }
             }
             else -> startQueued = true
+        }
+    }
+
+    fun toggleInv() {
+        invOpen = !invOpen
+        invSel = -1
+        tapAttack = false
+    }
+
+    private fun invTap(vx: Float, vy: Float) {
+        if (vx < PX0 || vx > PX0 + PW || vy < PY0 || vy > PY0 + PH) {
+            toggleInv()
+            return
+        }
+        if (vx >= PX0 + PW - 16f && vy <= PY0 + 16f) {
+            toggleInv()
+            return
+        }
+        if (vy >= PY0 + 4f && vy <= PY0 + 18f) {
+            if (vx >= PX0 + 8f && vx <= PX0 + 68f) {
+                invPage = 0
+                invSel = -1
+                return
+            }
+            if (vx >= PX0 + 72f && vx <= PX0 + 132f) {
+                invPage = 1
+                invSel = -1
+                return
+            }
+        }
+        if (invPage == 0) {
+            if (vx >= GRID_X0 && vy >= GRID_Y0) {
+                val fx = (vx - GRID_X0) / 18f
+                val fy = (vy - GRID_Y0) / 18f
+                val col = fx.toInt()
+                val row = fy.toInt()
+                if (col < GRID_COLS && row < GRID_ROWS && fx - col < 16f / 18f && fy - row < 16f / 18f) {
+                    val idx = row * GRID_COLS + col
+                    if (invSel >= 0 && invSel != idx) {
+                        val a = invSel
+                        if (invItem[a] >= 0 && invItem[a] == invItem[idx]) {
+                            val move = min(invCount[a], STACK - invCount[idx])
+                            invCount[idx] += move
+                            invCount[a] -= move
+                            if (invCount[a] == 0) invItem[a] = -1
+                        } else {
+                            val ti = invItem[a]; val tc = invCount[a]
+                            invItem[a] = invItem[idx]; invCount[a] = invCount[idx]
+                            invItem[idx] = ti; invCount[idx] = tc
+                        }
+                        invSel = -1
+                    } else if (invItem[idx] >= 0) {
+                        invSel = idx
+                    } else {
+                        invSel = -1
+                    }
+                }
+            }
+        } else {
+            if (vx >= PX0 + 8f && vx <= PX0 + PW - 8f) {
+                val fy = vy - (PY0 + 26f)
+                val row = (fy / 20f).toInt()
+                if (row in recipes.indices && fy - row * 20f < 18f) tryCraft(row)
+            }
         }
     }
 
@@ -442,7 +553,13 @@ class Game {
         if (msgTime > 0f) msgTime -= dt
         if (gatherFlash > 0f) gatherFlash -= dt
         when (state) {
-            State.PLAY -> updatePlay(dt, input)
+            State.PLAY -> {
+                if (invOpen) {
+                    tapAttack = false
+                } else {
+                    updatePlay(dt, input)
+                }
+            }
             else -> if (startQueued || input.attack) {
                 if (state == State.TITLE) start(System.nanoTime()) else respawn()
             }
@@ -462,9 +579,162 @@ class Game {
         if (player.hp <= 0) state = State.DEAD
     }
 
-    private fun addItem(item: Int, n: Int) {
-        counts[item] += n
-        showMsg("+$n ${itemNames[item]}")
+    private fun countItem(item: Int): Int {
+        var n = 0
+        for (i in 0 until INV_SLOTS) if (invItem[i] == item) n += invCount[i]
+        return n
+    }
+
+    private fun addItem(item: Int, n: Int): Boolean {
+        var left = n
+        for (i in 0 until INV_SLOTS) {
+            if (invItem[i] == item && invCount[i] < STACK) {
+                val add = min(left, STACK - invCount[i])
+                invCount[i] += add
+                left -= add
+                if (left == 0) break
+            }
+        }
+        if (left > 0) {
+            for (i in 0 until INV_SLOTS) {
+                if (invItem[i] == -1) {
+                    val add = min(left, STACK)
+                    invItem[i] = item
+                    invCount[i] = add
+                    left -= add
+                    if (left == 0) break
+                }
+            }
+        }
+        if (left < n) showMsg("+${n - left} ${itemNames[item]}")
+        if (left > 0) {
+            showMsg("Inventory full!")
+            return false
+        }
+        return true
+    }
+
+    private fun consumeItem(item: Int, n: Int): Boolean {
+        if (countItem(item) < n) return false
+        var left = n
+        for (i in INV_SLOTS - 1 downTo 0) {
+            if (invItem[i] == item) {
+                val take = min(left, invCount[i])
+                invCount[i] -= take
+                left -= take
+                if (invCount[i] == 0) invItem[i] = -1
+                if (left == 0) break
+            }
+        }
+        return true
+    }
+
+    private fun heldItem(): Int = if (selected in 0 until HOT_SLOTS) invItem[selected] else -1
+
+    private fun heldTool(): Int = when (heldItem()) {
+        I_AXE -> I_AXE
+        I_PICK, I_IRON_PICK -> I_PICK
+        else -> -1
+    }
+
+    private fun swordDamage(): Int = if (heldItem() == I_IRON_SWORD) 2 else 1
+
+    private fun pickPower(): Int = if (heldItem() == I_IRON_PICK) 2 else 1
+
+    private fun benchNearby(): Boolean {
+        val ptx = ((player.x + player.w / 2) / TILE).toInt()
+        val pty = ((player.y + player.h / 2) / TILE).toInt()
+        for (dy in -2..2) {
+            for (dx in -2..2) {
+                if (tileAt(ptx + dx, pty + dy) == T_WORKBENCH) return true
+            }
+        }
+        return false
+    }
+
+    private val recipes = arrayOf(
+        intArrayOf(I_WORKBENCH, 1, I_WOOD, 8, 0),
+        intArrayOf(I_WWOOD, 4, I_WOOD, 2, 0),
+        intArrayOf(I_WSTONE, 4, I_STONE, 2, 1),
+        intArrayOf(I_DOOR, 1, I_WOOD, 4, 1),
+        intArrayOf(I_IRON_SWORD, 1, I_IRON, 3, 1),
+        intArrayOf(I_IRON_PICK, 1, I_IRON, 3, 1)
+    )
+
+    private val recipeExtra = arrayOf(
+        intArrayOf(0, 0),
+        intArrayOf(0, 0),
+        intArrayOf(0, 0),
+        intArrayOf(I_WOOD, 1),
+        intArrayOf(I_WOOD, 2),
+        intArrayOf(I_WOOD, 2)
+    )
+
+    private fun recipeLabel(r: Int): String {
+        val rec = recipes[r]
+        val extra = recipeExtra[r]
+        var s = "${itemNames[rec[0]]} x${rec[1]} < ${itemNames[rec[2]]} x${rec[3]}"
+        for (e in extra.indices step 2) {
+            if (extra[e] > 0) s += " + ${itemNames[extra[e]]} x${extra[e + 1]}"
+        }
+        if (rec[4] == 1) s += " [bench]"
+        return s
+    }
+
+    private fun tryCraft(r: Int) {
+        val rec = recipes[r]
+        if (rec[4] == 1 && !benchNearby()) {
+            showMsg("Need a workbench nearby")
+            return
+        }
+        if (countItem(rec[2]) < rec[3]) {
+            showMsg("Not enough ${itemNames[rec[2]]}")
+            return
+        }
+        val extra = recipeExtra[r]
+        for (e in extra.indices step 2) {
+            if (extra[e] > 0 && countItem(extra[e]) < extra[e + 1]) {
+                showMsg("Not enough ${itemNames[extra[e]]}")
+                return
+            }
+        }
+        consumeItem(rec[2], rec[3])
+        for (e in extra.indices step 2) {
+            if (extra[e] > 0) consumeItem(extra[e], extra[e + 1])
+        }
+        if (addItem(rec[0], rec[1])) showMsg("Crafted ${itemNames[rec[0]]}")
+    }
+
+    private fun buildableTile(t: Int): Boolean = when (t) {
+        T_MWALL, T_WATER, T_LAVA -> false
+        else -> true
+    }
+
+    private fun tryPlace() {
+        val item = heldItem()
+        val tile = when (item) {
+            I_WORKBENCH -> T_WORKBENCH
+            I_WWOOD -> T_WWOOD
+            I_WSTONE -> T_WSTONE
+            I_DOOR -> T_DOOR
+            else -> return
+        }
+        val ttx = ((player.x + player.w / 2 + player.dirX * 14f) / TILE).toInt()
+        val tty = ((player.y + player.h / 2 + player.dirY * 14f) / TILE).toInt()
+        val cur = tileAt(ttx, tty)
+        if (solidTile(cur) || !buildableTile(cur)) {
+            showMsg("Can't build here")
+            return
+        }
+        val tl = ttx * TILE
+        val tt = tty * TILE
+        if (player.x < tl + TILE && player.x + player.w > tl && player.y < tt + TILE && player.y + player.h > tt) {
+            showMsg("No room")
+            return
+        }
+        setTile(ttx, tty, tile)
+        consumeItem(item, 1)
+        gatherFlash = 0.15f
     }
 
     private fun maxNodeHp(tile: Int): Int = when (tile) {
@@ -472,12 +742,15 @@ class Game {
         T_ROCK -> 3
         T_ORE_IRON -> 4
         T_ORE_GOLD -> 5
+        T_WORKBENCH, T_WWOOD, T_WSTONE, T_DOOR -> 2
         else -> 0
     }
 
     private fun toolFor(tile: Int): Int = when (tile) {
         T_TREE, T_STREE, T_CACTUS, T_DEAD_TREE -> I_AXE
         T_ROCK, T_ORE_IRON, T_ORE_GOLD -> I_PICK
+        T_WORKBENCH, T_WWOOD, T_DOOR -> I_AXE
+        T_WSTONE -> I_PICK
         else -> -1
     }
 
@@ -508,16 +781,23 @@ class Game {
         val attack = input.attack || tapAttack
         tapAttack = false
         if (attack && swingCd <= 0f) {
-            swingTimer = SWING_TIME
-            swingCd = SWING_COOLDOWN
-            swingId++
-            val ttx = ((player.x + player.w / 2 + player.dirX * 14f) / TILE).toInt()
-            val tty = ((player.y + player.h / 2 + player.dirY * 14f) / TILE).toInt()
-            gatherTile = if (ttx in 0 until MAP_W && tty in 0 until MAP_H) tty * MAP_W + ttx else -1
+            val heldRaw = heldItem()
+            if (heldRaw == I_WORKBENCH || heldRaw == I_WWOOD || heldRaw == I_WSTONE || heldRaw == I_DOOR) {
+                swingCd = 0.25f
+                tryPlace()
+            } else {
+                swingTimer = SWING_TIME
+                swingCd = SWING_COOLDOWN
+                swingId++
+                val ttx = ((player.x + player.w / 2 + player.dirX * 14f) / TILE).toInt()
+                val tty = ((player.y + player.h / 2 + player.dirY * 14f) / TILE).toInt()
+                gatherTile = if (ttx in 0 until MAP_W && tty in 0 until MAP_H) tty * MAP_W + ttx else -1
+            }
         }
         if (swingTimer > 0f) {
             swingTimer -= dt
-            val held = selected
+            val heldRaw = heldItem()
+            val held = heldTool()
             val tile = if (gatherTile >= 0) tiles[gatherTile] else -1
             val needTool = if (tile >= 0) toolFor(tile) else -1
             if (needTool >= 0) {
@@ -525,7 +805,7 @@ class Game {
                     if (msgTime <= 0f) showMsg("need ${itemNames[needTool]}")
                 } else {
                     val cur = nodeHp[gatherTile] ?: maxNodeHp(tile)
-                    val left = cur - 1
+                    val left = cur - pickPower()
                     if (left <= 0) {
                         nodeHp.remove(gatherTile)
                         val tx = gatherTile % MAP_W
@@ -536,6 +816,10 @@ class Game {
                             T_ROCK -> addItem(I_STONE, 2 + random.nextInt(2))
                             T_ORE_IRON -> addItem(I_IRON, 1 + random.nextInt(2))
                             T_ORE_GOLD -> addItem(I_GOLD, 1 + random.nextInt(2))
+                            T_WORKBENCH -> addItem(I_WORKBENCH, 1)
+                            T_WWOOD -> addItem(I_WWOOD, 1)
+                            T_WSTONE -> addItem(I_WSTONE, 1)
+                            T_DOOR -> addItem(I_DOOR, 1)
                         }
                     } else {
                         nodeHp[gatherTile] = left
@@ -543,14 +827,14 @@ class Game {
                     gatherFlash = 0.15f
                 }
             }
-            if (held == I_SWORD) {
+            if (heldRaw == I_SWORD || heldRaw == I_IRON_SWORD) {
                 val sx = player.x + player.w / 2 + player.dirX * 13f
                 val sy = player.y + player.h / 2 + player.dirY * 13f
                 for (s in slimes) {
                     if (!s.alive || s.hitSwing == swingId) continue
                     if (abs(s.x + s.w / 2 - sx) < 13f && abs(s.y + s.h / 2 - sy) < 13f) {
                         s.hitSwing = swingId
-                        s.hp--
+                        s.hp -= swordDamage()
                         s.flash = 0.15f
                         s.kbx = player.dirX * 130f
                         s.kby = player.dirY * 130f
@@ -638,7 +922,7 @@ class Game {
             c.drawRect(gx, gy, gx + TILE, gy + TILE, paint)
         }
 
-        if (swingTimer > 0f && selected == I_SWORD) drawSlash(c)
+        if (swingTimer > 0f && (heldItem() == I_SWORD || heldItem() == I_IRON_SWORD)) drawSlash(c)
 
         drawHud(c)
 
@@ -684,6 +968,16 @@ class Game {
     private fun drawTile(c: Canvas, tx: Int, ty: Int, sx: Float, sy: Float) {
         val t = tileAt(tx, ty)
         val h = hash(tx, ty)
+        if (t == T_WORKBENCH || t == T_WWOOD || t == T_WSTONE || t == T_DOOR) {
+            paint.color = when (biomeAt(tx, ty)) {
+                B_DESERT -> if ((tx + ty) % 2 == 0) 0xFFd8c07a.toInt() else 0xFFd2b972.toInt()
+                B_SNOW -> if ((tx + ty) % 2 == 0) 0xFFe8f0f4.toInt() else 0xFFdfe9ef.toInt()
+                B_VOLCANIC -> if ((tx + ty) % 2 == 0) 0xFF4a4048.toInt() else 0xFF453b43.toInt()
+                B_MOUNTAIN -> if ((tx + ty) % 2 == 0) 0xFF8a8f98.toInt() else 0xFF848992.toInt()
+                else -> if ((tx + ty) % 2 == 0) 0xFF4a8f3c.toInt() else 0xFF468838.toInt()
+            }
+            c.drawRect(sx, sy, sx + TILE, sy + TILE, paint)
+        }
         when (t) {
             T_GRASS, T_TALL, T_FLOWER, T_TREE, T_ROCK -> {
                 paint.color = if ((tx + ty) % 2 == 0) 0xFF4a8f3c.toInt() else 0xFF468838.toInt()
@@ -840,6 +1134,43 @@ class Game {
                     c.drawRect(sx + 10f, sy + 12f, sx + 14f, sy + 13f, paint)
                 }
             }
+            T_WORKBENCH -> {
+                paint.color = 0xFF7a5a30.toInt()
+                c.drawRect(sx + 1f, sy + 5f, sx + 15f, sy + 9f, paint)
+                c.drawRect(sx + 3f, sy + 9f, sx + 5f, sy + 14f, paint)
+                c.drawRect(sx + 11f, sy + 9f, sx + 13f, sy + 14f, paint)
+                paint.color = 0xFF9a7440.toInt()
+                c.drawRect(sx + 1f, sy + 5f, sx + 15f, sy + 7f, paint)
+                paint.color = 0xFFc8ccd4.toInt()
+                c.drawRect(sx + 4f, sy + 3f, sx + 8f, sy + 5f, paint)
+            }
+            T_WWOOD -> {
+                paint.color = 0xFFb58a4a.toInt()
+                c.drawRect(sx, sy, sx + TILE, sy + TILE, paint)
+                paint.color = 0xFF9a7440.toInt()
+                c.drawRect(sx, sy + 7f, sx + TILE, sy + 8f, paint)
+                c.drawRect(sx + 7f, sy, sx + 8f, sy + 7f, paint)
+                c.drawRect(sx + 3f, sy + 8f, sx + 4f, sy + TILE, paint)
+                c.drawRect(sx + 11f, sy + 8f, sx + 12f, sy + TILE, paint)
+            }
+            T_WSTONE -> {
+                paint.color = 0xFF9aa0aa.toInt()
+                c.drawRect(sx, sy, sx + TILE, sy + TILE, paint)
+                paint.color = 0xFF767c86.toInt()
+                c.drawRect(sx, sy + 5f, sx + TILE, sy + 6f, paint)
+                c.drawRect(sx, sy + 11f, sx + TILE, sy + 12f, paint)
+                c.drawRect(sx + 8f, sy, sx + 9f, sy + 5f, paint)
+                c.drawRect(sx + 4f, sy + 6f, sx + 5f, sy + 11f, paint)
+                c.drawRect(sx + 10f, sy + 12f, sx + 11f, sy + TILE, paint)
+            }
+            T_DOOR -> {
+                paint.color = 0xFF8a5a30.toInt()
+                c.drawRect(sx + 2f, sy, sx + 14f, sy + 16f, paint)
+                paint.color = 0xFFa5713c.toInt()
+                c.drawRect(sx + 4f, sy + 1f, sx + 12f, sy + 15f, paint)
+                paint.color = 0xFFf0c040.toInt()
+                c.drawRect(sx + 10f, sy + 8f, sx + 12f, sy + 9f, paint)
+            }
         }
     }
 
@@ -902,7 +1233,8 @@ class Game {
     }
 
     private fun drawHeldItem(c: Canvas) {
-        if (selected > I_PICK) return
+        val held = heldItem()
+        if (held < 0) return
         val swinging = swingTimer > 0f
         val p = if (swinging) 1f - swingTimer / SWING_TIME else 0f
         val extend = if (swinging) 8f + sin(p * PI.toFloat()) * 5f else 8f
@@ -921,12 +1253,39 @@ class Game {
             c.drawRect(ex - size / 2, ey - size / 2, ex + size / 2, ey + size / 2, paint)
         }
 
-        when (selected) {
-            I_SWORD -> {
+        when (held) {
+            I_SWORD, I_IRON_SWORD -> {
+                val blade = if (held == I_IRON_SWORD) 0xFFe8ecf2.toInt() else 0xFFc8ccd4.toInt()
+                val tip = if (held == I_IRON_SWORD) 0xFFf6f8fb.toInt() else 0xFFeef2f6.toInt()
                 seg(-2, 2f, 0xFF5a3a1e.toInt())
                 seg(0, 3f, 0xFF8f6a30.toInt())
-                for (i in 1..5) seg(i, 2f, 0xFFc8ccd4.toInt())
-                seg(6, 2f, 0xFFeef2f6.toInt())
+                for (i in 1..5) seg(i, 2f, blade)
+                seg(6, 2f, tip)
+            }
+            I_WORKBENCH, I_WWOOD, I_WSTONE, I_DOOR -> {
+                val col = when (held) {
+                    I_WORKBENCH -> 0xFF9a7440.toInt()
+                    I_WWOOD -> 0xFFb58a4a.toInt()
+                    I_WSTONE -> 0xFF9aa0aa.toInt()
+                    else -> 0xFF8a5a30.toInt()
+                }
+                paint.color = col
+                val ex = cx + dx * 4f
+                val ey = cy + dy * 4f
+                c.drawRect(ex - 3f, ey - 3f, ex + 3f, ey + 3f, paint)
+                paint.color = 0xFF3a2a18.toInt()
+                c.drawRect(ex - 3f, ey - 3f, ex + 3f, ey - 2f, paint)
+            }
+            I_PICK, I_IRON_PICK -> {
+                val head = if (held == I_IRON_PICK) 0xFFe8ecf2.toInt() else 0xFFb0b5bd.toInt()
+                for (i in -1..4) seg(i, 2f, 0xFF7a5a30.toInt())
+                val hx = cx + dx * 5
+                val hy = cy + dy * 5
+                paint.color = head
+                c.drawRect(hx - perpX * 4f - 1f, hy - perpY * 4f - 1f, hx + perpX * 4f + 1f, hy + perpY * 4f + 1f, paint)
+                paint.color = 0xFF84898f.toInt()
+                c.drawRect(hx - perpX * 4f - 1f, hy - perpY * 4f - 1f, hx - perpX * 2f - 1f, hy - perpY * 2f - 1f, paint)
+                c.drawRect(hx + perpX * 2f - 1f, hy + perpY * 2f - 1f, hx + perpX * 4f + 1f, hy + perpY * 4f + 1f, paint)
             }
             I_AXE -> {
                 for (i in -1..4) seg(i, 2f, 0xFF7a5a30.toInt())
@@ -936,16 +1295,6 @@ class Game {
                 c.drawRect(hx - 3f, hy - 3f, hx + 3f, hy + 3f, paint)
                 paint.color = 0xFF84898f.toInt()
                 c.drawRect(hx - 3f + dx, hy - 3f + dy, hx + 3f + dx, hy + 3f + dy, paint)
-            }
-            I_PICK -> {
-                for (i in -1..4) seg(i, 2f, 0xFF7a5a30.toInt())
-                val hx = cx + dx * 5
-                val hy = cy + dy * 5
-                paint.color = 0xFFb0b5bd.toInt()
-                c.drawRect(hx - perpX * 4f - 1f, hy - perpY * 4f - 1f, hx + perpX * 4f + 1f, hy + perpY * 4f + 1f, paint)
-                paint.color = 0xFF84898f.toInt()
-                c.drawRect(hx - perpX * 4f - 1f, hy - perpY * 4f - 1f, hx - perpX * 2f - 1f, hy - perpY * 2f - 1f, paint)
-                c.drawRect(hx + perpX * 2f - 1f, hy + perpY * 2f - 1f, hx + perpX * 4f + 1f, hy + perpY * 4f + 1f, paint)
             }
         }
     }
@@ -1027,16 +1376,154 @@ class Game {
                 paint.color = if (item == I_IRON) 0xFFe8ecf2.toInt() else 0xFFffe080.toInt()
                 c.drawRect(x + 2f, y + 3f, x + 5f, y + 5f, paint)
             }
+            I_WORKBENCH -> {
+                paint.color = 0xFF7a5a30.toInt()
+                c.drawRect(x + 1f, y + 3f, x + 10f, y + 6f, paint)
+                c.drawRect(x + 2f, y + 6f, x + 4f, y + 11f, paint)
+                c.drawRect(x + 7f, y + 6f, x + 9f, y + 11f, paint)
+                paint.color = 0xFF9a7440.toInt()
+                c.drawRect(x + 1f, y + 3f, x + 10f, y + 5f, paint)
+                paint.color = 0xFFc8ccd4.toInt()
+                c.drawRect(x + 3f, y + 2f, x + 6f, y + 3f, paint)
+            }
+            I_WWOOD -> {
+                paint.color = 0xFFb58a4a.toInt()
+                c.drawRect(x + 1f, y + 2f, x + 10f, y + 9f, paint)
+                paint.color = 0xFF9a7440.toInt()
+                c.drawRect(x + 1f, y + 5f, x + 10f, y + 6f, paint)
+                c.drawRect(x + 5f, y + 2f, x + 6f, y + 9f, paint)
+            }
+            I_WSTONE -> {
+                paint.color = 0xFF9aa0aa.toInt()
+                c.drawRect(x + 1f, y + 2f, x + 10f, y + 6f, paint)
+                c.drawRect(x + 1f, y + 7f, x + 10f, y + 11f, paint)
+                paint.color = 0xFF767c86.toInt()
+                c.drawRect(x + 5f, y + 2f, x + 6f, y + 6f, paint)
+                c.drawRect(x + 2f, y + 7f, x + 3f, y + 11f, paint)
+                c.drawRect(x + 8f, y + 7f, x + 9f, y + 11f, paint)
+            }
+            I_DOOR -> {
+                paint.color = 0xFF8a5a30.toInt()
+                c.drawRect(x + 2f, y + 1f, x + 9f, y + 12f, paint)
+                paint.color = 0xFFa5713c.toInt()
+                c.drawRect(x + 3f, y + 2f, x + 8f, y + 11f, paint)
+                paint.color = 0xFFf0c040.toInt()
+                c.drawRect(x + 7f, y + 6f, x + 8f, y + 7f, paint)
+            }
+            I_IRON_SWORD -> {
+                paint.color = 0xFF5a3a1e.toInt()
+                c.drawRect(x + 4f, y + 8f, x + 6f, y + 11f, paint)
+                paint.color = 0xFF8f6a30.toInt()
+                c.drawRect(x + 3f, y + 7f, x + 7f, y + 8f, paint)
+                paint.color = 0xFFe8ecf2.toInt()
+                c.drawRect(x + 4f, y, x + 6f, y + 7f, paint)
+                paint.color = 0xFFf6f8fb.toInt()
+                c.drawRect(x + 4f, y, x + 5f, y + 2f, paint)
+            }
+            I_IRON_PICK -> {
+                paint.color = 0xFF7a5a30.toInt()
+                c.drawRect(x + 4f, y + 2f, x + 6f, y + 11f, paint)
+                paint.color = 0xFFe8ecf2.toInt()
+                c.drawRect(x + 1f, y, x + 9f, y + 2f, paint)
+                c.drawRect(x, y + 2f, x + 2f, y + 3f, paint)
+                c.drawRect(x + 8f, y + 2f, x + 10f, y + 3f, paint)
+            }
+        }
+    }
+
+    private fun drawInv(c: Canvas) {
+        paint.color = 0xd0181824.toInt()
+        c.drawRect(PX0, PY0, PX0 + PW, PY0 + PH, paint)
+        paint.color = 0xFF4dd0e8.toInt()
+        paint.style = Paint.Style.STROKE
+        paint.strokeWidth = 1f
+        c.drawRect(PX0 + 0.5f, PY0 + 0.5f, PX0 + PW - 0.5f, PY0 + PH - 0.5f, paint)
+        paint.style = Paint.Style.FILL
+
+        textPaint.textSize = 9f
+        paint.color = if (invPage == 0) 0xFF3a5a6a.toInt() else 0xaa2a2a34.toInt()
+        c.drawRect(PX0 + 8f, PY0 + 4f, PX0 + 68f, PY0 + 18f, paint)
+        paint.color = if (invPage == 1) 0xFF3a5a6a.toInt() else 0xaa2a2a34.toInt()
+        c.drawRect(PX0 + 72f, PY0 + 4f, PX0 + 132f, PY0 + 18f, paint)
+        textPaint.color = 0xFFffffff.toInt()
+        c.drawText("ITEMS", PX0 + 18f, PY0 + 14f, textPaint)
+        c.drawText("CRAFT", PX0 + 84f, PY0 + 14f, textPaint)
+        paint.color = 0xFFa03030.toInt()
+        c.drawRect(PX0 + PW - 16f, PY0 + 4f, PX0 + PW - 4f, PY0 + 16f, paint)
+        paint.color = 0xFFffffff.toInt()
+        c.drawRect(PX0 + PW - 13f, PY0 + 7f, PX0 + PW - 11f, PY0 + 13f, paint)
+        c.drawRect(PX0 + PW - 9f, PY0 + 7f, PX0 + PW - 7f, PY0 + 13f, paint)
+
+        if (invPage == 0) {
+            for (i in 0 until INV_SLOTS) {
+                val col = i % GRID_COLS
+                val row = i / GRID_COLS
+                val x = GRID_X0 + col * 18f
+                val y = GRID_Y0 + row * 18f
+                paint.color = 0xaa2a2a34.toInt()
+                c.drawRect(x, y, x + 16f, y + 16f, paint)
+                if (i == invSel) {
+                    paint.color = 0xFFffd94a.toInt()
+                    paint.style = Paint.Style.STROKE
+                    c.drawRect(x + 0.5f, y + 0.5f, x + 15.5f, y + 15.5f, paint)
+                    paint.style = Paint.Style.FILL
+                }
+                if (i < HOT_SLOTS) {
+                    paint.color = 0x504dd0e8
+                    c.drawRect(x, y, x + 16f, y + 1f, paint)
+                }
+                val it = invItem[i]
+                if (it >= 0) {
+                    drawItemIcon(c, it, x + 3f, y + 3f)
+                    if (invCount[i] > 1) {
+                        textPaint.color = 0xFF000000.toInt()
+                        textPaint.textSize = 7f
+                        c.drawText(invCount[i].toString(), x + 8f, y + 15f, textPaint)
+                        textPaint.color = 0xFFffffff.toInt()
+                        c.drawText(invCount[i].toString(), x + 7.5f, y + 14.5f, textPaint)
+                    }
+                }
+            }
+            textPaint.color = 0xFF9ab0c0.toInt()
+            textPaint.textSize = 8f
+            c.drawText("top row = hotbar", GRID_X0, PY0 + 30f, textPaint)
+        } else {
+            for (r in recipes.indices) {
+                val y = PY0 + 26f + r * 20f
+                paint.color = 0xaa2a2a34.toInt()
+                c.drawRect(PX0 + 8f, y, PX0 + PW - 8f, y + 18f, paint)
+                val rec = recipes[r]
+                var can = countItem(rec[2]) >= rec[3]
+                val extra = recipeExtra[r]
+                for (e in extra.indices step 2) {
+                    if (extra[e] > 0 && countItem(extra[e]) < extra[e + 1]) can = false
+                }
+                if (rec[4] == 1 && !benchNearby()) can = false
+                textPaint.color = if (can) 0xFF7ce87c.toInt() else 0xFFe86a6a.toInt()
+                textPaint.textSize = 8f
+                c.drawText(recipeLabel(r), PX0 + 12f, y + 12f, textPaint)
+            }
+            if (!benchNearby()) {
+                textPaint.color = 0xFFe8b04a.toInt()
+                textPaint.textSize = 8f
+                c.drawText("no workbench nearby", PX0 + 8f, PY0 + PH - 6f, textPaint)
+            }
         }
     }
 
     private fun drawHud(c: Canvas) {
-        for (i in 0 until 3) {
-            drawHeart(c, 4f + i * 9f, 4f, i < player.hp)
+        for (i in 0 until MAX_HP) {
+            drawHeart(c, 4f + i * 8f, 4f, i < player.hp)
         }
         if (curBiome >= 0) {
             drawCentered(c, biomeNames[curBiome], 12f, 8f, 0xFFffffff.toInt())
         }
+        paint.color = 0xaa2a2a34.toInt()
+        c.drawRect(VW - 18f, 2f, VW - 2f, 18f, paint)
+        paint.color = 0xFFc8a050.toInt()
+        c.drawRect(VW - 13f, 7f, VW - 7f, 14f, paint)
+        paint.color = 0xFF8a6a30.toInt()
+        c.drawRect(VW - 12f, 6f, VW - 8f, 8f, paint)
         for (i in 0 until HOT_SLOTS) {
             val x = HOT_X0 + i * HOT_CELL
             paint.color = 0xaa2a2a34.toInt()
@@ -1048,17 +1535,21 @@ class Game {
                 c.drawRect(x + 0.5f, HOT_Y0 + 0.5f, x + 15.5f, HOT_Y0 + 15.5f, paint)
                 paint.style = Paint.Style.FILL
             }
-            drawItemIcon(c, i, x + 3f, HOT_Y0 + 3f)
-            if (i >= I_WOOD) {
-                textPaint.color = 0xFF000000.toInt()
-                textPaint.textSize = 7f
-                c.drawText(counts[i].toString(), x + 8f, HOT_Y0 + 15f, textPaint)
-                textPaint.color = 0xFFffffff.toInt()
-                c.drawText(counts[i].toString(), x + 7.5f, HOT_Y0 + 14.5f, textPaint)
+            val it = invItem[i]
+            if (it >= 0) {
+                drawItemIcon(c, it, x + 3f, HOT_Y0 + 3f)
+                if (invCount[i] > 1) {
+                    textPaint.color = 0xFF000000.toInt()
+                    textPaint.textSize = 7f
+                    c.drawText(invCount[i].toString(), x + 8f, HOT_Y0 + 15f, textPaint)
+                    textPaint.color = 0xFFffffff.toInt()
+                    c.drawText(invCount[i].toString(), x + 7.5f, HOT_Y0 + 14.5f, textPaint)
+                }
             }
         }
         if (msgTime > 0f) {
             drawCentered(c, msg, HOT_Y0 - 6f, 9f, 0xFFffd94a.toInt())
         }
+        if (invOpen) drawInv(c)
     }
 }
