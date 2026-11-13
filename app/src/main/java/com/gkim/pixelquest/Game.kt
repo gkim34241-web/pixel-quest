@@ -8,8 +8,6 @@ import kotlin.math.PI
 import kotlin.math.abs
 import kotlin.math.atan2
 import kotlin.math.cos
-import kotlin.math.floorDiv
-import kotlin.math.floorMod
 import kotlin.math.hypot
 import kotlin.math.max
 import kotlin.math.min
@@ -230,6 +228,10 @@ class Game {
         textPaint.isFakeBoldText = true
     }
 
+    private fun fdiv(a: Int, b: Int): Int = if (a >= 0) a / b else (a - b + 1) / b
+
+    private fun fmod(a: Int, b: Int): Int = a - fdiv(a, b) * b
+
     private fun chunkKey(cx: Int, cy: Int): Long =
         (cx.toLong() shl 32) or (cy.toLong() and 0xffffffffL)
 
@@ -240,11 +242,11 @@ class Game {
         chunks.getOrPut(chunkKey(cx, cy)) { generateChunk(cx, cy) }
 
     private fun setTile(tx: Int, ty: Int, t: Int) {
-        chunkAt(floorDiv(tx, CHUNK), floorDiv(ty, CHUNK))[floorMod(ty, CHUNK) * CHUNK + floorMod(tx, CHUNK)] = t
+        chunkAt(fdiv(tx, CHUNK), fdiv(ty, CHUNK))[fmod(ty, CHUNK) * CHUNK + fmod(tx, CHUNK)] = t
     }
 
     private fun tileAt(tx: Int, ty: Int): Int =
-        chunkAt(floorDiv(tx, CHUNK), floorDiv(ty, CHUNK))[floorMod(ty, CHUNK) * CHUNK + floorMod(tx, CHUNK)]
+        chunkAt(fdiv(tx, CHUNK), fdiv(ty, CHUNK))[fmod(ty, CHUNK) * CHUNK + fmod(tx, CHUNK)]
 
     private fun solidTile(t: Int) =
         t == T_TREE || t == T_ROCK || t == T_WATER || t == T_CACTUS || t == T_STREE ||
@@ -410,8 +412,8 @@ class Game {
         val pcx = player.x + player.w / 2
         val pcy = player.y + player.h / 2
         if (slimes.count { it.type == 6 } >= 3) return
-        val prx = floorDiv((pcx / TILE).toInt(), REGION)
-        val pry = floorDiv((pcy / TILE).toInt(), REGION)
+        val prx = fdiv((pcx / TILE).toInt(), REGION)
+        val pry = fdiv((pcy / TILE).toInt(), REGION)
         for (ry in pry - 1..pry + 1) {
             for (rx in prx - 1..prx + 1) {
                 if (!villageSite(rx, ry)) continue
@@ -505,8 +507,8 @@ class Game {
             for (x in 0 until CHUNK) {
                 val wx = bx + x
                 val wy = by + y
-                val rx = floorDiv(wx, REGION)
-                val ry = floorDiv(wy, REGION)
+                val rx = fdiv(wx, REGION)
+                val ry = fdiv(wy, REGION)
                 if (villageSite(rx, ry)) {
                     val o = siteOrigin(rx, ry, 73)
                     val v = villageTile(wx, wy, o.first, o.second)
