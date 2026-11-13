@@ -20,6 +20,7 @@ class GameView(context: Context) : SurfaceView(context), SurfaceHolder.Callback,
     private val frame = Bitmap.createBitmap(Game.VW, Game.VH, Bitmap.Config.ARGB_8888)
     private val frameCanvas = Canvas(frame)
     private val screenPaint = Paint()
+    private val uiPaint = Paint()
     private val dest = RectF()
     private var scale = 1f
 
@@ -75,6 +76,15 @@ class GameView(context: Context) : SurfaceView(context), SurfaceHolder.Callback,
             try {
                 game.render(frameCanvas)
                 canvas.drawBitmap(frame, null, dest, screenPaint)
+                if (joyPointer != -1) {
+                    uiPaint.color = 0x55ffffff.toInt()
+                    uiPaint.style = Paint.Style.STROKE
+                    uiPaint.strokeWidth = 3f
+                    canvas.drawCircle(joyBaseX, joyBaseY, 40f, uiPaint)
+                    uiPaint.color = 0x884dd0e8.toInt()
+                    uiPaint.style = Paint.Style.FILL
+                    canvas.drawCircle(joyBaseX + joyX * 32f, joyBaseY + joyY * 32f, 16f, uiPaint)
+                }
             } finally {
                 holder.unlockCanvasAndPost(canvas)
             }

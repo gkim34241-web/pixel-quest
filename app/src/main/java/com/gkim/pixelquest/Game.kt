@@ -181,6 +181,7 @@ class Game {
     private var msgTime = 0f
     private var curBiome = -1
     private var tapAttack = false
+    private var btnFlash = 0f
     private var startQueued = false
     private var volcanoX = 0
     private var volcanoY = 0
@@ -466,6 +467,11 @@ class Game {
                     toggleInv()
                     return
                 }
+                if (vx >= VW - 36f && vy >= VH - 36f) {
+                    btnFlash = 0.18f
+                    tapAttack = true
+                    return
+                }
                 if (vy >= HOT_Y0 - 4f && vx >= HOT_X0 - 2f && vx <= HOT_X0 + HOT_SLOTS * HOT_CELL) {
                     val slot = ((vx - HOT_X0) / HOT_CELL).toInt().coerceIn(0, HOT_SLOTS - 1)
                     selected = slot
@@ -551,6 +557,7 @@ class Game {
     fun update(dt: Float, input: Input) {
         time += dt
         if (hurtFlash > 0f) hurtFlash -= dt
+        if (btnFlash > 0f) btnFlash -= dt
         if (msgTime > 0f) msgTime -= dt
         if (gatherFlash > 0f) gatherFlash -= dt
         when (state) {
@@ -1195,7 +1202,14 @@ class Game {
 
     private fun drawPlayer(c: Canvas) {
         if (player.invuln > 0f && (time * 12f).toInt() % 2 == 0) return
-        val bob = if (player.moving) (((player.walkT * 8f).toInt()) % 2).toFloat() else 0f
+        val step = if (player.moving) ((player.walkT * 7f).toInt()) % 4 else -1
+        val legL = if (step == 1) -2f else 0f
+        val legR = if (step == 3) -2f else 0f
+        val bob = when {
+            player.moving -> if (step == 1 || step == 3) 1f else 0f
+            sin(time * 2f) > 0.5f -> 1f
+            else -> 0f
+        }
         val px = player.x - 1f - camX
         val py = player.y - 2f - camY + bob
         val facing = if (abs(player.dirX) > abs(player.dirY)) {
@@ -1204,13 +1218,13 @@ class Game {
             if (player.dirY < 0) 3 else 0
         }
         paint.color = 0xFF35455e.toInt()
-        c.drawRect(px + 2f, py + 11f, px + 5f, py + 14f, paint)
-        c.drawRect(px + 7f, py + 11f, px + 10f, py + 14f, paint)
+        c.drawRect(px + 2f, py + 11f, px + 5f, py + 14f + legL, paint)
+        c.drawRect(px + 7f, py + 11f, px + 10f, py + 14f + legR, paint)
         paint.color = 0xFFc0392b.toInt()
         c.drawRect(px + 1f, py + 6f, px + 11f, py + 11f, paint)
         paint.color = 0xFFf2c79a.toInt()
-        c.drawRect(px, py + 7f, px + 2f, py + 10f, paint)
-        c.drawRect(px + 10f, py + 7f, px + 12f, py + 10f, paint)
+        c.drawRect(px, py + 7f + legR, px + 2f, py + 10f + legR, paint)
+        c.drawRect(px + 10f, py + 7f + legL, px + 12f, py + 10f + legL, paint)
         c.drawRect(px + 2f, py, px + 10f, py + 6f, paint)
         paint.color = 0xFF5a3a1e.toInt()
         if (facing == 3) {
@@ -1525,6 +1539,17 @@ class Game {
         c.drawRect(VW - 13f, 7f, VW - 7f, 14f, paint)
         paint.color = 0xFF8a6a30.toInt()
         c.drawRect(VW - 12f, 6f, VW - 8f, 8f, paint)
+        val pressed = btnFlash > 0f
+        paint.color = if (pressed) 0xFF3a6a7a.toInt() else 0xaa2a2a34.toInt()
+        c.drawCircle(VW - 18f, VH - 18f, 15f, paint)
+        paint.color = if (pressed) 0xFFe8ffff.toInt() else 0xFF4dd0e8.toInt()
+        paint.style = Paint.Style.STROKE
+        paint.strokeWidth = 1f
+        c.drawCircle(VW - 18f, VH - 18f, 15f, paint)
+        paint.style = Paint.Style.FILL
+        textPaint.color = 0xFFffffff.toInt()
+        textPaint.textSize = 9f
+        c.drawText("USE", VW - 18f - textPaint.measureText("USE") / 2f, VH - 15f, textPaint)
         for (i in 0 until HOT_SLOTS) {
             val x = HOT_X0 + i * HOT_CELL
             paint.color = 0xaa2a2a34.toInt()
