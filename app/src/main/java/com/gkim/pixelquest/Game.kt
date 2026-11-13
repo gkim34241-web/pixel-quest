@@ -8,6 +8,8 @@ import kotlin.math.PI
 import kotlin.math.abs
 import kotlin.math.atan2
 import kotlin.math.cos
+import kotlin.math.floorDiv
+import kotlin.math.floorMod
 import kotlin.math.hypot
 import kotlin.math.max
 import kotlin.math.min
@@ -20,9 +22,10 @@ class Game {
         const val VW = 320
         const val VH = 180
         const val TILE = 16
-        const val MAP_W = 128
-        const val MAP_H = 128
-        const val SLIME_COUNT = 18
+        const val CHUNK = 32
+        const val REGION = 64
+        const val MOB_CAP = 14
+        const val BANDIT_CAP = 3
         const val PLAYER_SPEED = 70f
         const val SWING_TIME = 0.22f
         const val SWING_COOLDOWN = 0.38f
@@ -100,6 +103,8 @@ class Game {
         var flash = 0f
         var hitSwing = -1
         var phase = 0f
+        var homeX = 0f
+        var homeY = 0f
     }
 
     private val B_FOREST = 0
@@ -133,6 +138,12 @@ class Game {
     private val T_WWOOD = 21
     private val T_WSTONE = 22
     private val T_DOOR = 23
+    private val T_HOUSE_WALL = 24
+    private val T_HOUSE_FLOOR = 25
+    private val T_FENCE = 26
+    private val T_WINDOW = 27
+    private val T_FLOOR_WOOD = 28
+    private val T_FURNACE = 29
 
     private val I_SWORD = 0
     private val I_AXE = 1
@@ -147,15 +158,21 @@ class Game {
     private val I_DOOR = 10
     private val I_IRON_SWORD = 11
     private val I_IRON_PICK = 12
+    private val I_FLOOR = 13
+    private val I_WINDOW = 14
+    private val I_FENCE = 15
+    private val I_FURNACE = 16
 
     private val itemNames = arrayOf(
         "Sword", "Axe", "Pickaxe", "Wood", "Stone", "Iron", "Gold",
-        "Workbench", "Wood wall", "Stone wall", "Door", "Iron sword", "Iron pick"
+        "Workbench", "Wood wall", "Stone wall", "Door", "Iron sword", "Iron pick",
+        "Wood floor", "Window", "Fence", "Furnace"
     )
 
     var state = State.TITLE
-    private val tiles = IntArray(MAP_W * MAP_H)
-    private val nodeHp = HashMap<Int, Int>()
+    private val chunks = HashMap<Long, IntArray>()
+    private val nodeHp = HashMap<Long, Int>()
+    private var worldSeed = 0L
     private val player = Player()
     private val slimes = ArrayList<Slime>()
     private var spawnX = 0f
@@ -165,7 +182,8 @@ class Game {
     private var swingTimer = 0f
     private var swingCd = 0f
     private var swingId = 0
-    private var gatherTile = -1
+    private var gatherX = -1
+    private var gatherY = -1
     private var gatherFlash = 0f
     private var hurtFlash = 0f
     private var time = 0f
@@ -183,18 +201,27 @@ class Game {
     private var tapAttack = false
     private var btnFlash = 0f
     private var startQueued = false
-    private var volcanoX = 0
-    private var volcanoY = 0
+    private var slimeTimer = 0f
+    private var banditTimer = 25f
+    private var villageTimer = 0f
 
     private val paint = Paint()
     private val textPaint = Paint()
     private val oval = RectF()
 
-    private val slimeBody = intArrayOf(0xFF58c14e.toInt(), 0xFFd8a03c.toInt(), 0xFF7ad0e8.toInt(), 0xFFd84a3a.toInt(), 0xFF9a9aa8.toInt())
-    private val slimeDark = intArrayOf(0xFF2f7a2a.toInt(), 0xFF96681e.toInt(), 0xFF3a92ac.toInt(), 0xFF8f2418.toInt(), 0xFF5c6068.toInt())
-    private val slimeMaxHp = intArrayOf(2, 2, 3, 4, 3)
-    private val slimeWander = floatArrayOf(22f, 26f, 20f, 24f, 18f)
-    private val slimeChase = floatArrayOf(40f, 46f, 36f, 44f, 34f)
+    private val slimeBody = intArrayOf(0xFF58c14e.toInt(), 0xFFd8a03c.toInt(), 0xFF7ad0e8.toInt(), 0xFFd84a3a.toInt(), 0xFF9a9aa8.toInt(), 0xFF4a5568.toInt(), 0xFF8a6a4a.toInt())
+    private val slimeDark = intArrayOf(0xFF2f7a2a.toInt(), 0xFF96681e.toInt(), 0xFF3a92ac.toInt(), 0xFF8f2418.toInt(), 0xFF5c6068.toInt(), 0xFF2c3440.toInt(), 0xFF6a5238.toInt())
+    private val slimeMaxHp = intArrayOf(2, 2, 3, 4, 3, 6, 5)
+    private val slimeWander = floatArrayOf(22f, 26f, 20f, 24f, 18f, 30f, 12f)
+    private val slimeChase = floatArrayOf(40f, 46f, 36f, 44f, 34f, 58f, 20f)
+
+    private val villagerLines = arrayOf(
+        "Welcome, traveler!",
+        "Beware of bandits out there!",
+        "Fine weather today.",
+        "We built this village ourselves.",
+        "Come back anytime!"
+    )
     private val biomeNames = arrayOf("Forest", "Desert", "Snowfields", "Volcanic lands", "Mountains", "Lake")
 
     init {
@@ -203,20 +230,28 @@ class Game {
         textPaint.isFakeBoldText = true
     }
 
+    private fun chunkKey(cx: Int, cy: Int): Long =
+        (cx.toLong() shl 32) or (cy.toLong() and 0xffffffffL)
+
+    private fun tkey(tx: Int, ty: Int): Long =
+        (tx.toLong() shl 32) or (ty.toLong() and 0xffffffffL)
+
+    private fun chunkAt(cx: Int, cy: Int): IntArray =
+        chunks.getOrPut(chunkKey(cx, cy)) { generateChunk(cx, cy) }
+
     private fun setTile(tx: Int, ty: Int, t: Int) {
-        if (tx in 0 until MAP_W && ty in 0 until MAP_H) tiles[ty * MAP_W + tx] = t
+        chunkAt(floorDiv(tx, CHUNK), floorDiv(ty, CHUNK))[floorMod(ty, CHUNK) * CHUNK + floorMod(tx, CHUNK)] = t
     }
 
-    private fun tileAt(tx: Int, ty: Int): Int {
-        if (tx !in 0 until MAP_W || ty !in 0 until MAP_H) return T_MWALL
-        return tiles[ty * MAP_W + tx]
-    }
+    private fun tileAt(tx: Int, ty: Int): Int =
+        chunkAt(floorDiv(tx, CHUNK), floorDiv(ty, CHUNK))[floorMod(ty, CHUNK) * CHUNK + floorMod(tx, CHUNK)]
 
     private fun solidTile(t: Int) =
         t == T_TREE || t == T_ROCK || t == T_WATER || t == T_CACTUS || t == T_STREE ||
             t == T_LAVA || t == T_ORE_IRON || t == T_ORE_GOLD || t == T_DEAD_TREE ||
             t == T_MWALL || t == T_RUIN_WALL ||
-            t == T_WORKBENCH || t == T_WWOOD || t == T_WSTONE
+            t == T_WORKBENCH || t == T_WWOOD || t == T_WSTONE ||
+            t == T_HOUSE_WALL || t == T_FENCE || t == T_WINDOW || t == T_FURNACE
 
     private fun solid(tx: Int, ty: Int) = solidTile(tileAt(tx, ty))
 
@@ -250,6 +285,7 @@ class Game {
         if (e > 0.64f) return B_MOUNTAIN
         if (e < 0.23f) return B_LAKE
         val t = vnoise(tx.toFloat(), ty.toFloat(), 36f, 21)
+        if (vnoise(tx.toFloat(), ty.toFloat(), 44f, 31) > 0.76f) return B_VOLCANIC
         return when {
             t > 0.62f -> B_DESERT
             t < 0.38f -> B_SNOW
@@ -267,29 +303,16 @@ class Game {
 
     fun start(seed: Long) {
         random = Random(seed)
-        volcanoX = 20 + random.nextInt(MAP_W - 40)
-        volcanoY = 20 + random.nextInt(MAP_H - 40)
-        generateMap()
+        worldSeed = seed
+        chunks.clear()
+        nodeHp.clear()
         findSpawn()
         player.reset(spawnX, spawnY)
         slimes.clear()
-        nodeHp.clear()
-        repeat(SLIME_COUNT) {
-            val p = randomWalkable(120f) ?: return@repeat
-            val s = Slime()
-            s.x = p.first - s.w / 2
-            s.y = p.second - s.h / 2
-            s.phase = random.nextFloat() * 6f
-            s.type = when (biomeAt((p.first / TILE).toInt(), (p.second / TILE).toInt())) {
-                B_DESERT -> 1
-                B_SNOW -> 2
-                B_VOLCANIC -> 3
-                B_MOUNTAIN -> 4
-                else -> 0
-            }
-            s.hp = slimeMaxHp[s.type]
-            slimes.add(s)
-        }
+        slimeTimer = 0f
+        banditTimer = 25f
+        villageTimer = 0f
+        repeat(8) { spawnMob(-1) }
         invItem.fill(-1)
         invCount.fill(0)
         invOpen = false
@@ -318,15 +341,12 @@ class Game {
     }
 
     private fun findSpawn() {
-        val cx = MAP_W / 2
-        val cy = MAP_H / 2
-        for (r in 0 until 40) {
+        for (r in 0 until 64) {
             for (dy in -r..r) {
                 for (dx in -r..r) {
                     if (max(abs(dx), abs(dy)) != r) continue
-                    val tx = cx + dx
-                    val ty = cy + dy
-                    if (tx < 4 || ty < 4 || tx >= MAP_W - 4 || ty >= MAP_H - 4) continue
+                    val tx = dx
+                    val ty = dy
                     if (solid(tx, ty)) continue
                     if (biomeAt(tx, ty) != B_FOREST) continue
                     spawnX = tx * TILE + 8f
@@ -335,91 +355,211 @@ class Game {
                 }
             }
         }
-        spawnX = cx * TILE + 8f
-        spawnY = cy * TILE + 8f
+        spawnX = 8f
+        spawnY = 8f
     }
 
-    private fun randomWalkable(minDist: Float): Pair<Float, Float>? {
+    private fun randomWalkable(minDist: Float, maxDist: Float = 1e9f): Pair<Float, Float>? {
         val pcx = player.x + player.w / 2
         val pcy = player.y + player.h / 2
         repeat(400) {
-            val tx = 4 + random.nextInt(MAP_W - 8)
-            val ty = 4 + random.nextInt(MAP_H - 8)
+            val ang = random.nextFloat() * 2f * PI.toFloat()
+            val dist = minDist + random.nextFloat() * (maxDist - minDist)
+            val tx = (pcx / TILE).toInt() + (cos(ang) * dist / TILE).toInt()
+            val ty = (pcy / TILE).toInt() + (sin(ang) * dist / TILE).toInt()
             if (solid(tx, ty)) return@repeat
-            val cx = tx * TILE + 8f
-            val cy = ty * TILE + 8f
-            if (hypot(cx - pcx, cy - pcy) < minDist) return@repeat
-            return Pair(cx, cy)
+            return Pair(tx * TILE + 8f, ty * TILE + 8f)
         }
         return null
     }
 
-    private fun generateMap() {
-        for (y in 0 until MAP_H) {
-            for (x in 0 until MAP_W) {
-                val b = biomeAt(x, y)
-                var t = when (b) {
-                    B_LAKE -> T_WATER
-                    B_MOUNTAIN -> T_MFLOOR
-                    B_DESERT -> T_SAND
-                    B_SNOW -> T_SNOW
-                    else -> T_GRASS
-                }
-                val r = random.nextFloat()
-                when (b) {
-                    B_FOREST -> {
-                        if (r < 0.07f) t = T_TREE
-                        else if (r < 0.11f) t = T_ROCK
-                        else if (r < 0.25f) t = T_TALL
-                        else if (r < 0.29f) t = T_FLOWER
-                    }
-                    B_DESERT -> {
-                        if (r < 0.035f) t = T_CACTUS
-                        else if (r < 0.06f) t = T_ROCK
-                    }
-                    B_SNOW -> {
-                        if (r < 0.06f) t = T_STREE
-                        else if (r < 0.09f) t = T_ROCK
-                    }
-                    B_MOUNTAIN -> {
-                        if (r < 0.10f) t = T_ROCK
-                        else if (r < 0.15f) t = T_ORE_IRON
-                        else if (r < 0.165f) t = T_ORE_GOLD
-                    }
-                    else -> {}
-                }
-                val dv = hypot((x - volcanoX).toFloat(), (y - volcanoY).toFloat())
-                if (dv < 15f) {
-                    t = if (dv < 5.5f + vnoise(x.toFloat(), y.toFloat(), 6f, 31) * 3f) T_LAVA else T_VROCK
-                    if (t == T_VROCK && r < 0.06f) t = T_DEAD_TREE
-                }
-                tiles[y * MAP_W + x] = t
-            }
+    private fun randomWalkableNear(cx: Float, cy: Float, radius: Float): Pair<Float, Float>? {
+        val r = (radius / TILE).toInt() + 1
+        val ctx = (cx / TILE).toInt()
+        val cty = (cy / TILE).toInt()
+        repeat(60) {
+            val tx = ctx - r + random.nextInt(r * 2 + 1)
+            val ty = cty - r + random.nextInt(r * 2 + 1)
+            if (!solid(tx, ty)) return Pair(tx * TILE + 8f, ty * TILE + 8f)
         }
-        repeat(3) {
-            val rx = 12 + random.nextInt(MAP_W - 32)
-            val ry = 12 + random.nextInt(MAP_H - 24)
-            val rw = 10 + random.nextInt(5)
-            val rh = 7 + random.nextInt(4)
-            for (y in ry until ry + rh) {
-                for (x in rx until rx + rw) {
-                    val edge = x == rx || x == rx + rw - 1 || y == ry || y == ry + rh - 1
-                    if (edge) {
-                        val gap = (x == rx + rw / 2 && (y == ry || y == ry + rh - 1)) ||
-                            (y == ry + rh / 2 && (x == rx || x == rx + rw - 1))
-                        setTile(x, y, if (gap) T_RUIN_FLOOR else T_RUIN_WALL)
-                    } else {
-                        setTile(x, y, if (random.nextFloat() < 0.08f) T_ORE_GOLD else T_RUIN_FLOOR)
-                    }
-                }
+        return null
+    }
+
+    private fun spawnMob(kind: Int): Boolean {
+        val p = randomWalkable(90f, 160f) ?: return false
+        val m = Slime()
+        m.x = p.first - m.w / 2
+        m.y = p.second - m.h / 2
+        m.phase = random.nextFloat() * 6f
+        m.type = if (kind == -1) {
+            when (biomeAt((p.first / TILE).toInt(), (p.second / TILE).toInt())) {
+                B_DESERT -> 1
+                B_SNOW -> 2
+                B_VOLCANIC -> 3
+                B_MOUNTAIN -> 4
+                else -> 0
             }
-        }
-        for (y in 0 until MAP_H) {
-            for (x in 0 until MAP_W) {
-                if (x < 2 || y < 2 || x >= MAP_W - 2 || y >= MAP_H - 2) setTile(x, y, T_MWALL)
+        } else kind
+        m.hp = slimeMaxHp[m.type]
+        slimes.add(m)
+        if (m.type == 5) showMsg("A bandit attacks!")
+        return true
+    }
+
+    private fun trySpawnVillagers() {
+        val pcx = player.x + player.w / 2
+        val pcy = player.y + player.h / 2
+        if (slimes.count { it.type == 6 } >= 3) return
+        val prx = floorDiv((pcx / TILE).toInt(), REGION)
+        val pry = floorDiv((pcy / TILE).toInt(), REGION)
+        for (ry in pry - 1..pry + 1) {
+            for (rx in prx - 1..prx + 1) {
+                if (!villageSite(rx, ry)) continue
+                val o = siteOrigin(rx, ry, 73)
+                val cx = (o.first + 9) * TILE + 8f
+                val cy = (o.second + 7) * TILE + 8f
+                if (hypot(cx - pcx, cy - pcy) > 260f) continue
+                if (slimes.any { it.type == 6 && hypot(it.x - cx, it.y - cy) < 100f }) continue
+                val p = randomWalkableNear(cx, cy, 60f) ?: continue
+                val m = Slime()
+                m.x = p.first - m.w / 2
+                m.y = p.second - m.h / 2
+                m.type = 6
+                m.hp = slimeMaxHp[6]
+                m.phase = random.nextFloat() * 6f
+                m.homeX = cx
+                m.homeY = cy
+                slimes.add(m)
             }
         }
     }
+
+    private fun villageSite(rx: Int, ry: Int): Boolean =
+        h2(rx, ry, 71) < 0.16f && biomeAt(rx * REGION + 32, ry * REGION + 32) == B_FOREST
+
+    private fun ruinSite(rx: Int, ry: Int): Boolean =
+        !villageSite(rx, ry) && h2(rx, ry, 72) < 0.20f &&
+            biomeAt(rx * REGION + 32, ry * REGION + 32) != B_LAKE
+
+    private fun siteOrigin(rx: Int, ry: Int, salt: Int): Pair<Int, Int> =
+        Pair(
+            rx * REGION + 8 + (h2(rx, ry, salt) * (REGION - 34)).toInt(),
+            ry * REGION + 8 + (h2(rx, ry, salt + 1) * (REGION - 26)).toInt()
+        )
+
+    private fun villageTile(x: Int, y: Int, ox: Int, oy: Int): Int {
+        val vx = x - ox
+        val vy = y - oy
+        if (vx < 0 || vy < 0 || vx >= 18 || vy >= 14) return -1
+        if (vx < 10 && vy < 7) {
+            val edge = vx == 0 || vx == 9 || vy == 0 || vy == 6
+            return when {
+                vx == 5 && vy == 6 -> T_HOUSE_FLOOR
+                edge -> if (vx == 3 && vy == 0) T_WINDOW else T_HOUSE_WALL
+                else -> T_HOUSE_FLOOR
+            }
+        }
+        if (vx >= 11 && vy >= 8 && vx < 17 && vy < 13) {
+            val lx = vx - 11
+            val ly = vy - 8
+            val edge = lx == 0 || lx == 5 || ly == 0 || ly == 4
+            return when {
+                lx == 2 && ly == 4 -> T_HOUSE_FLOOR
+                edge -> if (lx == 4 && ly == 0) T_WINDOW else T_HOUSE_WALL
+                else -> T_HOUSE_FLOOR
+            }
+        }
+        if (vy == 7 || (vx == 10 && vy in 7..8)) return T_PATH
+        return -1
+    }
+
+    private fun ruinTile(x: Int, y: Int, ox: Int, oy: Int, rng: Random): Int {
+        val rw = 12
+        val rh = 8
+        val vx = x - ox
+        val vy = y - oy
+        if (vx < 0 || vy < 0 || vx >= rw || vy >= rh) return -1
+        val edge = vx == 0 || vx == rw - 1 || vy == 0 || vy == rh - 1
+        return when {
+            edge -> {
+                val gap = (vx == rw / 2 && (vy == 0 || vy == rh - 1)) ||
+                    (vy == rh / 2 && (vx == 0 || vx == rw - 1))
+                if (gap) T_RUIN_FLOOR else T_RUIN_WALL
+            }
+            rng.nextFloat() < 0.08f -> T_ORE_GOLD
+            else -> T_RUIN_FLOOR
+        }
+    }
+
+    private fun generateChunk(cx: Int, cy: Int): IntArray {
+        val ch = IntArray(CHUNK * CHUNK)
+        val bx = cx * CHUNK
+        val by = cy * CHUNK
+        val rng = Random(chunkKey(cx, cy) xor worldSeed)
+        for (y in 0 until CHUNK) {
+            for (x in 0 until CHUNK) {
+                ch[y * CHUNK + x] = baseTerrain(bx + x, by + y, rng.nextFloat())
+            }
+        }
+        for (y in 0 until CHUNK) {
+            for (x in 0 until CHUNK) {
+                val wx = bx + x
+                val wy = by + y
+                val rx = floorDiv(wx, REGION)
+                val ry = floorDiv(wy, REGION)
+                if (villageSite(rx, ry)) {
+                    val o = siteOrigin(rx, ry, 73)
+                    val v = villageTile(wx, wy, o.first, o.second)
+                    if (v >= 0) ch[y * CHUNK + x] = v
+                } else if (ruinSite(rx, ry)) {
+                    val o = siteOrigin(rx, ry, 75)
+                    val v = ruinTile(wx, wy, o.first, o.second, rng)
+                    if (v >= 0) ch[y * CHUNK + x] = v
+                }
+            }
+        }
+        return ch
+    }
+
+    private fun baseTerrain(x: Int, y: Int, r: Float): Int {
+        val b = biomeAt(x, y)
+        var t = when (b) {
+            B_LAKE -> T_WATER
+            B_MOUNTAIN -> T_MFLOOR
+            B_DESERT -> T_SAND
+            B_SNOW -> T_SNOW
+            B_VOLCANIC -> T_VROCK
+            else -> T_GRASS
+        }
+        when (b) {
+            B_FOREST -> {
+                if (r < 0.07f) t = T_TREE
+                else if (r < 0.11f) t = T_ROCK
+                else if (r < 0.25f) t = T_TALL
+                else if (r < 0.29f) t = T_FLOWER
+            }
+            B_DESERT -> {
+                if (r < 0.035f) t = T_CACTUS
+                else if (r < 0.06f) t = T_ROCK
+            }
+            B_SNOW -> {
+                if (r < 0.06f) t = T_STREE
+                else if (r < 0.09f) t = T_ROCK
+            }
+            B_MOUNTAIN -> {
+                if (r < 0.10f) t = T_ROCK
+                else if (r < 0.15f) t = T_ORE_IRON
+                else if (r < 0.165f) t = T_ORE_GOLD
+            }
+            B_VOLCANIC -> {
+                if (vnoise(x.toFloat(), y.toFloat(), 7f, 33) > 0.78f) t = T_LAVA
+                else if (r < 0.05f) t = T_DEAD_TREE
+            }
+            else -> {}
+        }
+        return t
+    }
+
 
     private fun collides(px: Float, py: Float, w: Float, h: Float): Boolean {
         val x0 = (px / TILE).toInt()
@@ -466,6 +606,15 @@ class Game {
                 if (vx >= VW - 18f && vy <= 18f) {
                     toggleInv()
                     return
+                }
+                val wx = camX + vx
+                val wy = camY + vy
+                for (s in slimes) {
+                    if (!s.alive || s.type != 6) continue
+                    if (abs(s.x + s.w / 2 - wx) < 14f && abs(s.y + s.h / 2 - wy) < 14f) {
+                        showMsg(villagerLines[random.nextInt(villagerLines.size)])
+                        return
+                    }
                 }
                 if (vx >= VW - 36f && vy >= VH - 36f) {
                     btnFlash = 0.18f
@@ -543,8 +692,8 @@ class Game {
         } else {
             if (vx >= PX0 + 8f && vx <= PX0 + PW - 8f) {
                 val fy = vy - (PY0 + 26f)
-                val row = (fy / 20f).toInt()
-                if (row in recipes.indices && fy - row * 20f < 18f) tryCraft(row)
+                val row = (fy / 13f).toInt()
+                if (row in recipes.indices && fy - row * 13f < 12f) tryCraft(row)
             }
         }
     }
@@ -666,7 +815,11 @@ class Game {
         intArrayOf(I_WSTONE, 4, I_STONE, 2, 1),
         intArrayOf(I_DOOR, 1, I_WOOD, 4, 1),
         intArrayOf(I_IRON_SWORD, 1, I_IRON, 3, 1),
-        intArrayOf(I_IRON_PICK, 1, I_IRON, 3, 1)
+        intArrayOf(I_IRON_PICK, 1, I_IRON, 3, 1),
+        intArrayOf(I_FLOOR, 4, I_WOOD, 2, 0),
+        intArrayOf(I_FENCE, 4, I_WOOD, 2, 1),
+        intArrayOf(I_WINDOW, 1, I_WOOD, 2, 1),
+        intArrayOf(I_FURNACE, 1, I_STONE, 8, 1)
     )
 
     private val recipeExtra = arrayOf(
@@ -675,7 +828,11 @@ class Game {
         intArrayOf(0, 0),
         intArrayOf(I_WOOD, 1),
         intArrayOf(I_WOOD, 2),
-        intArrayOf(I_WOOD, 2)
+        intArrayOf(I_WOOD, 2),
+        intArrayOf(0, 0),
+        intArrayOf(0, 0),
+        intArrayOf(0, 0),
+        intArrayOf(0, 0)
     )
 
     private fun recipeLabel(r: Int): String {
@@ -725,6 +882,10 @@ class Game {
             I_WWOOD -> T_WWOOD
             I_WSTONE -> T_WSTONE
             I_DOOR -> T_DOOR
+            I_FLOOR -> T_FLOOR_WOOD
+            I_WINDOW -> T_WINDOW
+            I_FENCE -> T_FENCE
+            I_FURNACE -> T_FURNACE
             else -> return
         }
         val ttx = ((player.x + player.w / 2 + player.dirX * 14f) / TILE).toInt()
@@ -751,6 +912,8 @@ class Game {
         T_ORE_IRON -> 4
         T_ORE_GOLD -> 5
         T_WORKBENCH, T_WWOOD, T_WSTONE, T_DOOR -> 2
+        T_HOUSE_WALL, T_FENCE, T_WINDOW, T_FLOOR_WOOD -> 2
+        T_FURNACE -> 3
         else -> 0
     }
 
@@ -758,13 +921,30 @@ class Game {
         T_TREE, T_STREE, T_CACTUS, T_DEAD_TREE -> I_AXE
         T_ROCK, T_ORE_IRON, T_ORE_GOLD -> I_PICK
         T_WORKBENCH, T_WWOOD, T_DOOR -> I_AXE
-        T_WSTONE -> I_PICK
+        T_WSTONE, T_FURNACE -> I_PICK
+        T_HOUSE_WALL, T_FENCE, T_WINDOW, T_FLOOR_WOOD -> I_AXE
         else -> -1
     }
 
     private fun updatePlay(dt: Float, input: Input) {
         if (player.invuln > 0f) player.invuln -= dt
         if (swingCd > 0f) swingCd -= dt
+
+        slimeTimer -= dt
+        if (slimeTimer <= 0f) {
+            slimeTimer = 2.5f
+            if (slimes.count { it.alive && it.type < 5 } < MOB_CAP) spawnMob(-1)
+        }
+        banditTimer -= dt
+        if (banditTimer <= 0f) {
+            banditTimer = 18f + random.nextFloat() * 15f
+            if (slimes.count { it.alive && it.type == 5 } < BANDIT_CAP) spawnMob(5)
+        }
+        villageTimer -= dt
+        if (villageTimer <= 0f) {
+            villageTimer = 4f
+            trySpawnVillagers()
+        }
 
         val len = hypot(input.moveX, input.moveY)
         var vx = 0f
@@ -790,7 +970,7 @@ class Game {
         tapAttack = false
         if (attack && swingCd <= 0f) {
             val heldRaw = heldItem()
-            if (heldRaw == I_WORKBENCH || heldRaw == I_WWOOD || heldRaw == I_WSTONE || heldRaw == I_DOOR) {
+            if (heldRaw in I_WORKBENCH..I_FURNACE) {
                 swingCd = 0.25f
                 tryPlace()
             } else {
@@ -799,25 +979,27 @@ class Game {
                 swingId++
                 val ttx = ((player.x + player.w / 2 + player.dirX * 14f) / TILE).toInt()
                 val tty = ((player.y + player.h / 2 + player.dirY * 14f) / TILE).toInt()
-                gatherTile = if (ttx in 0 until MAP_W && tty in 0 until MAP_H) tty * MAP_W + ttx else -1
+                gatherX = ttx
+                gatherY = tty
             }
         }
         if (swingTimer > 0f) {
             swingTimer -= dt
             val heldRaw = heldItem()
             val held = heldTool()
-            val tile = if (gatherTile >= 0) tiles[gatherTile] else -1
+            val tile = if (gatherX >= 0) tileAt(gatherX, gatherY) else -1
             val needTool = if (tile >= 0) toolFor(tile) else -1
             if (needTool >= 0) {
                 if (held != needTool) {
                     if (msgTime <= 0f) showMsg("need ${itemNames[needTool]}")
                 } else {
-                    val cur = nodeHp[gatherTile] ?: maxNodeHp(tile)
+                    val gk = tkey(gatherX, gatherY)
+                    val cur = nodeHp[gk] ?: maxNodeHp(tile)
                     val left = cur - pickPower()
                     if (left <= 0) {
-                        nodeHp.remove(gatherTile)
-                        val tx = gatherTile % MAP_W
-                        val ty = gatherTile / MAP_W
+                        nodeHp.remove(gk)
+                        val tx = gatherX
+                        val ty = gatherY
                         setTile(tx, ty, bareTile(tx, ty))
                         when (tile) {
                             T_TREE, T_STREE, T_CACTUS, T_DEAD_TREE -> addItem(I_WOOD, 2 + random.nextInt(2))
@@ -828,9 +1010,14 @@ class Game {
                             T_WWOOD -> addItem(I_WWOOD, 1)
                             T_WSTONE -> addItem(I_WSTONE, 1)
                             T_DOOR -> addItem(I_DOOR, 1)
+                            T_HOUSE_WALL -> addItem(I_WOOD, 1)
+                            T_FLOOR_WOOD, T_HOUSE_FLOOR -> addItem(I_FLOOR, 1)
+                            T_FENCE -> addItem(I_FENCE, 1)
+                            T_WINDOW -> addItem(I_WINDOW, 1)
+                            T_FURNACE -> addItem(I_FURNACE, 1)
                         }
                     } else {
-                        nodeHp[gatherTile] = left
+                        nodeHp[gk] = left
                     }
                     gatherFlash = 0.15f
                 }
@@ -846,7 +1033,13 @@ class Game {
                         s.flash = 0.15f
                         s.kbx = player.dirX * 130f
                         s.kby = player.dirY * 130f
-                        if (s.hp <= 0) s.alive = false
+                        if (s.hp <= 0) {
+                            s.alive = false
+                            if (s.type == 5) {
+                                addItem(I_GOLD, 1 + random.nextInt(2))
+                                if (random.nextFloat() < 0.3f) addItem(I_IRON, 1)
+                            }
+                        }
                     }
                 }
             }
@@ -854,6 +1047,11 @@ class Game {
 
         val pcx = player.x + player.w / 2
         val pcy = player.y + player.h / 2
+        val mit = slimes.iterator()
+        while (mit.hasNext()) {
+            val s = mit.next()
+            if (!s.alive || hypot(s.x - pcx, s.y - pcy) > 340f) mit.remove()
+        }
         for (s in slimes) {
             if (!s.alive) continue
             if (s.flash > 0f) s.flash -= dt
@@ -863,7 +1061,19 @@ class Game {
             val scy = s.y + s.h / 2
             val dist = hypot(pcx - scx, pcy - scy)
             s.think -= dt
-            if (dist < 90f) {
+            if (s.type == 6) {
+                if (s.think <= 0f) {
+                    s.think = 1.0f + random.nextFloat() * 1.5f
+                    val a = random.nextFloat() * 2f * PI.toFloat()
+                    s.vx = cos(a) * slimeWander[6]
+                    s.vy = sin(a) * slimeWander[6]
+                    val hd = hypot(s.homeX - scx, s.homeY - scy)
+                    if (hd > 70f) {
+                        s.vx = (s.homeX - scx) / hd * 24f
+                        s.vy = (s.homeY - scy) / hd * 24f
+                    }
+                }
+            } else if (dist < (if (s.type == 5) 150f else 90f)) {
                 val inv = 1f / max(dist, 0.001f)
                 s.vx = (pcx - scx) * inv * slimeChase[s.type]
                 s.vy = (pcy - scy) * inv * slimeChase[s.type]
@@ -874,7 +1084,7 @@ class Game {
                 s.vy = sin(a) * slimeWander[s.type]
             }
             if (!moveBox(s, (s.vx + s.kbx) * dt, (s.vy + s.kby) * dt)) s.think = 0f
-            if (overlaps(player, s)) {
+            if (overlaps(player, s) && s.type != 6) {
                 hurtPlayer(scx, scy)
                 if (state != State.PLAY) return
             }
@@ -899,8 +1109,8 @@ class Game {
             showMsg(biomeNames[pb])
         }
 
-        camX = (pcx - VW / 2f).coerceIn(0f, (MAP_W * TILE - VW).toFloat())
-        camY = (pcy - VH / 2f).coerceIn(0f, (MAP_H * TILE - VH).toFloat())
+        camX = pcx - VW / 2f
+        camY = pcy - VH / 2f
     }
 
     private fun hash(a: Int, b: Int): Int = ((a * 73856093) xor (b * 19349663)) and 0x7fffffff
@@ -908,8 +1118,8 @@ class Game {
     fun render(c: Canvas) {
         val tx0 = (camX / TILE).toInt()
         val ty0 = (camY / TILE).toInt()
-        val tx1 = min(MAP_W - 1, ((camX + VW) / TILE).toInt() + 1)
-        val ty1 = min(MAP_H - 1, ((camY + VH) / TILE).toInt() + 1)
+        val tx1 = ((camX + VW) / TILE).toInt() + 1
+        val ty1 = ((camY + VH) / TILE).toInt() + 1
         for (ty in ty0..ty1) {
             for (tx in tx0..tx1) {
                 drawTile(c, tx, ty, tx * TILE - camX, ty * TILE - camY)
@@ -923,10 +1133,10 @@ class Game {
         drawPlayer(c)
         drawHeldItem(c)
 
-        if (gatherFlash > 0f && gatherTile >= 0) {
+        if (gatherFlash > 0f && gatherX >= 0) {
             paint.color = ((gatherFlash / 0.15f * 160).toInt() shl 24) or 0x00ffffff
-            val gx = (gatherTile % MAP_W) * TILE - camX
-            val gy = (gatherTile / MAP_W) * TILE - camY
+            val gx = gatherX * TILE - camX
+            val gy = gatherY * TILE - camY
             c.drawRect(gx, gy, gx + TILE, gy + TILE, paint)
         }
 
@@ -976,7 +1186,8 @@ class Game {
     private fun drawTile(c: Canvas, tx: Int, ty: Int, sx: Float, sy: Float) {
         val t = tileAt(tx, ty)
         val h = hash(tx, ty)
-        if (t == T_WORKBENCH || t == T_WWOOD || t == T_WSTONE || t == T_DOOR) {
+        if (t == T_WORKBENCH || t == T_WWOOD || t == T_WSTONE || t == T_DOOR ||
+            t == T_FENCE || t == T_WINDOW || t == T_FURNACE) {
             paint.color = when (biomeAt(tx, ty)) {
                 B_DESERT -> if ((tx + ty) % 2 == 0) 0xFFd8c07a.toInt() else 0xFFd2b972.toInt()
                 B_SNOW -> if ((tx + ty) % 2 == 0) 0xFFe8f0f4.toInt() else 0xFFdfe9ef.toInt()
@@ -1179,10 +1390,59 @@ class Game {
                 paint.color = 0xFFf0c040.toInt()
                 c.drawRect(sx + 10f, sy + 8f, sx + 12f, sy + 9f, paint)
             }
+            T_HOUSE_WALL -> {
+                paint.color = 0xFFa88050.toInt()
+                c.drawRect(sx, sy, sx + TILE, sy + TILE, paint)
+                paint.color = 0xFF8a6238.toInt()
+                c.drawRect(sx, sy + 7f, sx + TILE, sy + 8f, paint)
+                c.drawRect(sx + 7f, sy, sx + 8f, sy + 7f, paint)
+                c.drawRect(sx + 3f, sy + 8f, sx + 4f, sy + TILE, paint)
+                c.drawRect(sx + 11f, sy + 8f, sx + 12f, sy + TILE, paint)
+            }
+            T_HOUSE_FLOOR, T_FLOOR_WOOD -> {
+                paint.color = if ((tx + ty) % 2 == 0) 0xFFb8894e.toInt() else 0xFFb08246.toInt()
+                c.drawRect(sx, sy, sx + TILE, sy + TILE, paint)
+                paint.color = 0xFF966a38.toInt()
+                c.drawRect(sx, sy + 7f, sx + TILE, sy + 8f, paint)
+                c.drawRect(sx + (h % 2) * 8f, sy, sx + (h % 2) * 8f + 1f, sy + 7f, paint)
+                c.drawRect(sx + ((h + 1) % 2) * 8f, sy + 8f, sx + ((h + 1) % 2) * 8f + 1f, sy + TILE, paint)
+            }
+            T_FENCE -> {
+                paint.color = 0xFF8a6a3a.toInt()
+                c.drawRect(sx + 2f, sy + 4f, sx + 4f, sy + 14f, paint)
+                c.drawRect(sx + 12f, sy + 4f, sx + 14f, sy + 14f, paint)
+                c.drawRect(sx, sy + 6f, sx + TILE, sy + 8f, paint)
+                c.drawRect(sx, sy + 11f, sx + TILE, sy + 13f, paint)
+            }
+            T_WINDOW -> {
+                paint.color = 0xFFa88050.toInt()
+                c.drawRect(sx, sy, sx + TILE, sy + TILE, paint)
+                paint.color = 0xFFa8d8e8.toInt()
+                c.drawRect(sx + 3f, sy + 3f, sx + 13f, sy + 13f, paint)
+                paint.color = 0xFFc8ecf8.toInt()
+                c.drawRect(sx + 4f, sy + 4f, sx + 8f, sy + 8f, paint)
+                paint.color = 0xFF7a5a30.toInt()
+                c.drawRect(sx + 7f, sy + 3f, sx + 9f, sy + 13f, paint)
+                c.drawRect(sx + 3f, sy + 7f, sx + 13f, sy + 9f, paint)
+            }
+            T_FURNACE -> {
+                paint.color = 0xFF6a6f78.toInt()
+                c.drawRect(sx + 1f, sy + 2f, sx + 15f, sy + 15f, paint)
+                paint.color = 0xFF54585f.toInt()
+                c.drawRect(sx + 1f, sy + 2f, sx + 15f, sy + 4f, paint)
+                paint.color = 0xFF1a1a1a.toInt()
+                c.drawRect(sx + 5f, sy + 7f, sx + 11f, sy + 13f, paint)
+                paint.color = if (h % 2 == 0) 0xFFf08030.toInt() else 0xFFd8481c.toInt()
+                c.drawRect(sx + 6f, sy + 10f, sx + 10f, sy + 13f, paint)
+            }
         }
     }
 
     private fun drawSlime(c: Canvas, s: Slime) {
+        if (s.type >= 5) {
+            drawHumanoid(c, s)
+            return
+        }
         val sx = s.x - 2f - camX
         val sy = s.y - 3f - camY
         val sq = sin(time * 6f + s.phase)
@@ -1198,6 +1458,30 @@ class Game {
         paint.color = 0xFF1a1a1a.toInt()
         c.drawRect(sx + 5f, sy + 6f + sq, sx + 6f, sy + 7f + sq, paint)
         c.drawRect(sx + 10f, sy + 6f + sq, sx + 11f, sy + 7f + sq, paint)
+    }
+
+    private fun drawHumanoid(c: Canvas, s: Slime) {
+        val px = s.x - 2f - camX
+        val py = s.y - 3f - camY
+        val bandit = s.type == 5
+        val walk = sin(time * 8f + s.phase) * 1.5f
+        val flash = s.flash > 0f
+        paint.color = if (flash) 0xFFffffff.toInt() else if (bandit) 0xFF2c3440.toInt() else 0xFF5a4632.toInt()
+        c.drawRect(px + 4f, py + 10f + walk, px + 7f, py + 14f, paint)
+        c.drawRect(px + 9f, py + 10f - walk, px + 12f, py + 14f, paint)
+        paint.color = if (flash) 0xFFffffff.toInt() else if (bandit) 0xFF4a5568.toInt() else 0xFF8a6a4a.toInt()
+        c.drawRect(px + 3f, py + 4f, px + 13f, py + 10f, paint)
+        paint.color = if (flash) 0xFFffffff.toInt() else 0xFFe8b890.toInt()
+        c.drawRect(px + 4f, py - 1f, px + 12f, py + 4f, paint)
+        paint.color = if (bandit) 0xFFa03030.toInt() else 0xFF6a5238.toInt()
+        c.drawRect(px + 4f, py - 1f, px + 12f, py + 1f, paint)
+        paint.color = 0xFF1a1a1a.toInt()
+        c.drawRect(px + 6f, py + 1f, px + 7f, py + 3f, paint)
+        c.drawRect(px + 9f, py + 1f, px + 10f, py + 3f, paint)
+        if (bandit) {
+            paint.color = 0xFF3a3f4a.toInt()
+            c.drawRect(px + 14f, py + 5f, px + 16f, py + 11f, paint)
+        }
     }
 
     private fun drawPlayer(c: Canvas) {
@@ -1277,11 +1561,16 @@ class Game {
                 for (i in 1..5) seg(i, 2f, blade)
                 seg(6, 2f, tip)
             }
-            I_WORKBENCH, I_WWOOD, I_WSTONE, I_DOOR -> {
+            I_WORKBENCH, I_WWOOD, I_WSTONE, I_DOOR,
+            I_FLOOR, I_WINDOW, I_FENCE, I_FURNACE -> {
                 val col = when (held) {
                     I_WORKBENCH -> 0xFF9a7440.toInt()
                     I_WWOOD -> 0xFFb58a4a.toInt()
                     I_WSTONE -> 0xFF9aa0aa.toInt()
+                    I_FLOOR -> 0xFFb8894e.toInt()
+                    I_WINDOW -> 0xFFa8d8e8.toInt()
+                    I_FENCE -> 0xFF8a6a3a.toInt()
+                    I_FURNACE -> 0xFF6a6f78.toInt()
                     else -> 0xFF8a5a30.toInt()
                 }
                 paint.color = col
@@ -1443,6 +1732,32 @@ class Game {
                 c.drawRect(x, y + 2f, x + 2f, y + 3f, paint)
                 c.drawRect(x + 8f, y + 2f, x + 10f, y + 3f, paint)
             }
+            I_FLOOR -> {
+                paint.color = 0xFFb8894e.toInt()
+                c.drawRect(x + 1f, y + 2f, x + 10f, y + 11f, paint)
+                paint.color = 0xFF966a38.toInt()
+                c.drawRect(x + 1f, y + 6f, x + 10f, y + 7f, paint)
+            }
+            I_WINDOW -> {
+                paint.color = 0xFFa88050.toInt()
+                c.drawRect(x + 1f, y + 1f, x + 10f, y + 12f, paint)
+                paint.color = 0xFFa8d8e8.toInt()
+                c.drawRect(x + 3f, y + 3f, x + 8f, y + 10f, paint)
+            }
+            I_FENCE -> {
+                paint.color = 0xFF8a6a3a.toInt()
+                c.drawRect(x + 2f, y + 2f, x + 4f, y + 11f, paint)
+                c.drawRect(x + 7f, y + 2f, x + 9f, y + 11f, paint)
+                c.drawRect(x, y + 4f, x + 11f, y + 5f, paint)
+            }
+            I_FURNACE -> {
+                paint.color = 0xFF6a6f78.toInt()
+                c.drawRect(x + 1f, y + 2f, x + 10f, y + 11f, paint)
+                paint.color = 0xFF1a1a1a.toInt()
+                c.drawRect(x + 3f, y + 5f, x + 8f, y + 9f, paint)
+                paint.color = 0xFFf08030.toInt()
+                c.drawRect(x + 4f, y + 7f, x + 7f, y + 9f, paint)
+            }
         }
     }
 
@@ -1504,9 +1819,9 @@ class Game {
             c.drawText("top row = hotbar", GRID_X0, PY0 + 30f, textPaint)
         } else {
             for (r in recipes.indices) {
-                val y = PY0 + 26f + r * 20f
+                val y = PY0 + 26f + r * 13f
                 paint.color = 0xaa2a2a34.toInt()
-                c.drawRect(PX0 + 8f, y, PX0 + PW - 8f, y + 18f, paint)
+                c.drawRect(PX0 + 8f, y, PX0 + PW - 8f, y + 12f, paint)
                 val rec = recipes[r]
                 var can = countItem(rec[2]) >= rec[3]
                 val extra = recipeExtra[r]
@@ -1515,13 +1830,8 @@ class Game {
                 }
                 if (rec[4] == 1 && !benchNearby()) can = false
                 textPaint.color = if (can) 0xFF7ce87c.toInt() else 0xFFe86a6a.toInt()
-                textPaint.textSize = 8f
-                c.drawText(recipeLabel(r), PX0 + 12f, y + 12f, textPaint)
-            }
-            if (!benchNearby()) {
-                textPaint.color = 0xFFe8b04a.toInt()
-                textPaint.textSize = 8f
-                c.drawText("no workbench nearby", PX0 + 8f, PY0 + PH - 6f, textPaint)
+                textPaint.textSize = 7f
+                c.drawText(recipeLabel(r), PX0 + 12f, y + 9f, textPaint)
             }
         }
     }
