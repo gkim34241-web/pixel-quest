@@ -24,8 +24,8 @@ class Game {
         const val TILE = 16
         const val CHUNK = 32
         const val REGION = 64
-        const val MOB_CAP = 3
-        const val BANDIT_CAP = 2
+        const val MOB_CAP = 2
+        const val BANDIT_CAP = 1
         const val PLAYER_SPEED = 70f
         const val SWING_TIME = 0.22f
         const val SWING_COOLDOWN = 0.38f
@@ -316,7 +316,7 @@ class Game {
         slimeTimer = 0f
         banditTimer = 25f
         villageTimer = 0f
-        repeat(3) { spawnMob(-1) }
+        repeat(2) { spawnMob(-1) }
         invItem.fill(-1)
         invCount.fill(0)
         invOpen = false
@@ -950,12 +950,12 @@ class Game {
 
         slimeTimer -= dt
         if (slimeTimer <= 0f) {
-            slimeTimer = 9f
+            slimeTimer = 15f
             if (slimes.count { it.alive && it.type < 5 } < MOB_CAP) spawnMob(-1)
         }
         banditTimer -= dt
         if (banditTimer <= 0f) {
-            banditTimer = 18f + random.nextFloat() * 15f
+            banditTimer = 35f + random.nextFloat() * 20f
             if (slimes.count { it.alive && it.type == 5 } < BANDIT_CAP) spawnMob(5)
         }
         villageTimer -= dt
@@ -1068,7 +1068,7 @@ class Game {
         val mit = slimes.iterator()
         while (mit.hasNext()) {
             val s = mit.next()
-            if (!s.alive || hypot(s.x - pcx, s.y - pcy) > 340f) mit.remove()
+            if (!s.alive || hypot(s.x - pcx, s.y - pcy) > 250f) mit.remove()
         }
         for (s in slimes) {
             if (!s.alive) continue
@@ -1091,7 +1091,7 @@ class Game {
                         s.vy = (s.homeY - scy) / hd * 24f
                     }
                 }
-            } else if (dist < (if (s.type == 5) 130f else 70f)) {
+            } else if (dist < (if (s.type == 5) 100f else 55f)) {
                 val inv = 1f / max(dist, 0.001f)
                 s.vx = (pcx - scx) * inv * slimeChase[s.type]
                 s.vy = (pcy - scy) * inv * slimeChase[s.type]
