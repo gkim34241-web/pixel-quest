@@ -24,7 +24,7 @@ class Game {
         const val TILE = 16
         const val CHUNK = 32
         const val REGION = 64
-        const val MOB_CAP = 14
+        const val MOB_CAP = 6
         const val BANDIT_CAP = 3
         const val PLAYER_SPEED = 70f
         const val SWING_TIME = 0.22f
@@ -950,7 +950,7 @@ class Game {
 
         slimeTimer -= dt
         if (slimeTimer <= 0f) {
-            slimeTimer = 2.5f
+            slimeTimer = 5f
             if (slimes.count { it.alive && it.type < 5 } < MOB_CAP) spawnMob(-1)
         }
         banditTimer -= dt
