@@ -11,8 +11,8 @@ android {
         applicationId = "com.gkim.pixelquest"
         minSdk = 21
         targetSdk = 34
-        versionCode = 9
-        versionName = "0.4.4"
+        versionCode = 10
+        versionName = "0.5.0"
     }
 
     buildTypes {

@@ -182,6 +182,9 @@ class Game {
     private var swingId = 0
     private var gatherX = -1
     private var gatherY = -1
+    private var wantX = -1
+    private var wantY = -1
+    private var gatherDone = true
     private var gatherFlash = 0f
     private var hurtFlash = 0f
     private var time = 0f
@@ -645,6 +648,19 @@ class Game {
                     val it = invItem[slot]
                     showMsg(if (it >= 0) itemNames[it] else "empty")
                 } else {
+                    val wx = camX + vx
+                    val wy = camY + vy
+                    val ttx = tf(wx)
+                    val tty = tf(wy)
+                    wantX = -1
+                    wantY = -1
+                    if (maxNodeHp(tileAt(ttx, tty)) > 0) {
+                        val d = hypot(ttx * TILE + 8f - (player.x + player.w / 2), tty * TILE + 8f - (player.y + player.h / 2))
+                        if (d <= 30f) {
+                            wantX = ttx
+                            wantY = tty
+                        }
+                    }
                     tapAttack = true
                 }
             }
@@ -995,10 +1011,21 @@ class Game {
                 swingTimer = SWING_TIME
                 swingCd = SWING_COOLDOWN
                 swingId++
-                val ttx = tf(player.x + player.w / 2 + player.dirX * 14f)
-                val tty = tf(player.y + player.h / 2 + player.dirY * 14f)
-                gatherX = ttx
-                gatherY = tty
+                gatherDone = false
+                if (wantX >= 0) {
+                    val dx = wantX * TILE + 8f - (player.x + player.w / 2)
+                    val dy = wantY * TILE + 8f - (player.y + player.h / 2)
+                    val d = max(hypot(dx, dy), 0.001f)
+                    player.dirX = dx / d
+                    player.dirY = dy / d
+                    gatherX = wantX
+                    gatherY = wantY
+                    wantX = -1
+                    wantY = -1
+                } else {
+                    gatherX = tf(player.x + player.w / 2 + player.dirX * 14f)
+                    gatherY = tf(player.y + player.h / 2 + player.dirY * 14f)
+                }
             }
         }
         if (swingTimer > 0f) {
@@ -1007,9 +1034,10 @@ class Game {
             val held = heldTool()
             val tile = if (gatherX >= 0) tileAt(gatherX, gatherY) else -1
             val needTool = if (tile >= 0) toolFor(tile) else -1
-            if (needTool >= 0) {
+            if (needTool >= 0 && !gatherDone) {
+                gatherDone = true
                 if (held != needTool) {
-                    if (msgTime <= 0f) showMsg("need ${itemNames[needTool]}")
+                    showMsg("need ${itemNames[needTool]}")
                 } else {
                     val gk = tkey(gatherX, gatherY)
                     val cur = nodeHp[gk] ?: maxNodeHp(tile)
@@ -1212,6 +1240,19 @@ class Game {
                     val oy = (h % 9) + 3f
                     c.drawRect(sx + ox, sy + oy, sx + ox + 1f, sy + oy + 2f, paint)
                 }
+                if (h % 7 == 0) {
+                    paint.color = 0xFF3f7d33.toInt()
+                    val ox = (h % 8) + 4f
+                    val oy = (h % 6) + 8f
+                    c.drawRect(sx + ox, sy + oy, sx + ox + 3f, sy + oy + 1f, paint)
+                    c.drawRect(sx + ox + 1f, sy + oy - 1f, sx + ox + 2f, sy + oy, paint)
+                }
+                if (h % 11 == 0) {
+                    paint.color = 0xFF54994a.toInt()
+                    val ox = (h % 7) + 6f
+                    val oy = (h % 5) + 4f
+                    c.drawRect(sx + ox, sy + oy, sx + ox + 4f, sy + oy + 2f, paint)
+                }
             }
             T_PATH -> {
                 paint.color = 0xFFc9a86a.toInt()
@@ -1267,6 +1308,7 @@ class Game {
                 c.drawRect(fx + 0.5f, fy + 0.5f, fx + 1.5f, fy + 1.5f, paint)
             }
             T_TREE -> {
+                drawShadow(c, sx + 8f, sy + 14.5f, 6.5f, 2f)
                 paint.color = 0xFF6b4a2b.toInt()
                 c.drawRect(sx + 6f, sy + 9f, sx + 10f, sy + 16f, paint)
                 paint.color = 0xFF2f6b2f.toInt()
@@ -1277,6 +1319,7 @@ class Game {
                 c.drawRect(sx + 3f, sy + 3f, sx + 7f, sy + 6f, paint)
             }
             T_STREE -> {
+                drawShadow(c, sx + 8f, sy + 14.5f, 6.5f, 2f)
                 paint.color = 0xFF6b4a2b.toInt()
                 c.drawRect(sx + 6f, sy + 10f, sx + 10f, sy + 16f, paint)
                 paint.color = 0xFF2a5c46.toInt()
@@ -1287,6 +1330,7 @@ class Game {
                 c.drawRect(sx + 3f, sy + 3f, sx + 7f, sy + 5f, paint)
             }
             T_CACTUS -> {
+                drawShadow(c, sx + 8f, sy + 14.5f, 5.5f, 2f)
                 paint.color = 0xFF3f8f4f.toInt()
                 c.drawRect(sx + 6f, sy + 2f, sx + 10f, sy + 15f, paint)
                 c.drawRect(sx + 2f, sy + 6f, sx + 6f, sy + 9f, paint)
@@ -1295,6 +1339,7 @@ class Game {
                 c.drawRect(sx + 9f, sy + 2f, sx + 10f, sy + 15f, paint)
             }
             T_ROCK -> {
+                drawShadow(c, sx + 8f, sy + 14f, 6.5f, 2f)
                 paint.color = 0xFF8a8f98.toInt()
                 c.drawRect(sx + 2f, sy + 5f, sx + 14f, sy + 14f, paint)
                 c.drawRect(sx + 4f, sy + 3f, sx + 12f, sy + 5f, paint)
@@ -1304,6 +1349,7 @@ class Game {
                 c.drawRect(sx + 2f, sy + 12f, sx + 14f, sy + 14f, paint)
             }
             T_ORE_IRON, T_ORE_GOLD -> {
+                drawShadow(c, sx + 8f, sy + 14f, 6.5f, 2f)
                 paint.color = 0xFF7d828b.toInt()
                 c.drawRect(sx + 2f, sy + 4f, sx + 14f, sy + 14f, paint)
                 paint.color = if (t == T_ORE_IRON) 0xFFc8ccd4.toInt() else 0xFFf0c040.toInt()
@@ -1313,6 +1359,7 @@ class Game {
                 c.drawRect(sx + 2f, sy + 12f, sx + 14f, sy + 14f, paint)
             }
             T_DEAD_TREE -> {
+                drawShadow(c, sx + 8f, sy + 14.5f, 5.5f, 2f)
                 paint.color = 0xFF5a4a44.toInt()
                 c.drawRect(sx + 6f, sy + 6f, sx + 10f, sy + 16f, paint)
                 c.drawRect(sx + 2f, sy + 2f, sx + 4f, sy + 7f, paint)
@@ -1425,6 +1472,12 @@ class Game {
         }
     }
 
+    private fun drawShadow(c: Canvas, cx: Float, cy: Float, rx: Float, ry: Float) {
+        paint.color = 0x3c000000.toInt()
+        oval.set(cx - rx, cy - ry, cx + rx, cy + ry)
+        c.drawOval(oval, paint)
+    }
+
     private fun drawSlime(c: Canvas, s: Slime) {
         if (s.type >= 5) {
             drawHumanoid(c, s)
@@ -1434,11 +1487,16 @@ class Game {
         val sy = s.y - 3f - camY
         val sq = sin(time * 6f + s.phase)
         val flash = s.flash > 0f
+        drawShadow(c, sx + 8f, sy + 12.5f, 7f, 2.5f)
         paint.color = if (flash) 0xFFffffff.toInt() else slimeBody[s.type]
         c.drawRect(sx + 1f, sy + 3f + sq, sx + 15f, sy + 12f, paint)
         c.drawRect(sx + 3f, sy + 1f + sq, sx + 13f, sy + 3f + sq, paint)
         paint.color = if (flash) 0xFFdddddd.toInt() else slimeDark[s.type]
         c.drawRect(sx + 1f, sy + 10f, sx + 15f, sy + 12f, paint)
+        if (!flash) {
+            paint.color = 0x58ffffff.toInt()
+            c.drawRect(sx + 3f, sy + 2f + sq, sx + 6f, sy + 4f + sq, paint)
+        }
         paint.color = 0xFFffffff.toInt()
         c.drawRect(sx + 4f, sy + 5f + sq, sx + 6f, sy + 7f + sq, paint)
         c.drawRect(sx + 10f, sy + 5f + sq, sx + 12f, sy + 7f + sq, paint)
@@ -1453,6 +1511,7 @@ class Game {
         val bandit = s.type == 5
         val walk = sin(time * 8f + s.phase) * 1.5f
         val flash = s.flash > 0f
+        drawShadow(c, px + 8f, py + 14f, 6f, 2f)
         paint.color = if (flash) 0xFFffffff.toInt() else if (bandit) 0xFF2c3440.toInt() else 0xFF5a4632.toInt()
         c.drawRect(px + 4f, py + 10f + walk, px + 7f, py + 14f, paint)
         c.drawRect(px + 9f, py + 10f - walk, px + 12f, py + 14f, paint)
@@ -1483,6 +1542,7 @@ class Game {
         }
         val px = player.x - 1f - camX
         val py = player.y - 2f - camY + bob
+        drawShadow(c, px + 6f, py + 14.5f, 6.5f, 2f)
         val facing = if (abs(player.dirX) > abs(player.dirY)) {
             if (player.dirX < 0) 1 else 2
         } else {
